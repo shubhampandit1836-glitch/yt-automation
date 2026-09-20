@@ -55,6 +55,13 @@ class AutonomousScheduler:
             max_instances=1,
         )
         self.scheduler.add_job(
+            lambda: self.enqueue("learning", {"kind": "daily-learning"}, priority=80),
+            IntervalTrigger(hours=24),
+            id="daily-learning",
+            coalesce=True,
+            max_instances=1,
+        )
+        self.scheduler.add_job(
             lambda: self.enqueue("monitor", {"kind": "velocity-watch"}, priority=30),
             IntervalTrigger(hours=1),
             id="velocity-watch",
@@ -65,6 +72,13 @@ class AutonomousScheduler:
             lambda: self.enqueue("monitor", {"kind": "youtube-sync"}, priority=25),
             IntervalTrigger(hours=1),
             id="youtube-sync",
+            coalesce=True,
+            max_instances=1,
+        )
+        self.scheduler.add_job(
+            lambda: self.enqueue("monitor", {"kind": "analytics-deep"}, priority=35),
+            IntervalTrigger(hours=24),
+            id="analytics-deep",
             coalesce=True,
             max_instances=1,
         )

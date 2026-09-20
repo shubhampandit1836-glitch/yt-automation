@@ -3,6 +3,7 @@ import {
   control,
   forceRun,
   getExperiments,
+  getComments,
   getMemory,
   getOps,
   getYoutubeAuthUrl,
@@ -142,8 +143,9 @@ function MemoryPage({ memoryQuery, setMemoryQuery, memory, searchMemory }) {
   return <><SectionHeading eyebrow="Channel memory" title="Your channel remembers what works." action={<div className="search-box"><span>⌕</span><input value={memoryQuery} onChange={(event) => setMemoryQuery(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && searchMemory()} placeholder="Search memory" /><button onClick={searchMemory}>Search</button></div>} /><div className="memory-grid"><section className="panel memory-stats"><span className="eyebrow">Memory layers</span><div className="memory-number">3</div><p>Working state, structured facts, and semantic recall are kept separate so a bad hypothesis cannot rewrite compliance.</p><div className="memory-layer"><i className="purple-dot" /><span>Working memory</span><b>per run</b></div><div className="memory-layer"><i className="orange-dot" /><span>Structured memory</span><b>permanent</b></div><div className="memory-layer"><i className="blue-dot" /><span>Playbook</span><b>versioned</b></div></section><section className="panel memory-results"><SectionHeading eyebrow="Recall results" title={memory?.query ? `Matches for “${memory.query}”` : 'Pinned knowledge'} />{memory?.items?.length ? memory.items.map((item) => <article className="memory-item" key={`${item.kind}-${item.title}`}><span className="memory-kind">{item.kind}</span><div><h3>{item.title}</h3><p>{item.snippet}</p></div><span>↗</span></article>) : <EmptyState title="No matching memory" detail="Try a broader query." />}</section></div></>
 }
 
-function CommentsPage() {
-  return <><SectionHeading eyebrow="Viewer feedback" title="Know what people want next." /><section className="panel comments-empty"><div className="comment-orbit">◍</div><h2>Comment intelligence is waiting for its adapter.</h2><p>When enabled, only high-confidence genuine feedback enters memory. Spam, toxic bait, and uncertain classifications stay out of the learning loop.</p><div className="comment-rules"><span>✓ topic requests weighted by likes</span><span>✓ corrections re-verified against sources</span><span>✓ criticism is never deleted</span></div></section></>
+function CommentsPage({ commentsData }) {
+  const items = commentsData?.items || []
+  return <><SectionHeading eyebrow="Viewer feedback" title="Know what people want next." /><div className="metric-grid"><MetricCard label="Video requests" value={commentsData?.insights?.requests || 0} detail="Fed back into planning" accent="purple" icon="＋" /><MetricCard label="Corrections" value={commentsData?.insights?.corrections || 0} detail="Re-checked against sources" accent="orange" icon="✓" /><MetricCard label="Spam held" value={commentsData?.insights?.spam || 0} detail="Never enters memory" accent="blue" icon="⌫" /><MetricCard label="Replies sent" value={commentsData?.insights?.replies || 0} detail="Rate limited and on persona" accent="green" icon="↗" /></div><section className="panel comments-empty">{items.length ? <div className="comment-list">{items.slice(0, 20).map((item) => <article className="comment-item" key={item.youtube_comment_id}><div><b>{item.author || 'Viewer'}</b><p>{item.text}</p></div><StatusPill value={item.label} /></article>)}</div> : <><div className="comment-orbit">◍</div><h2>Comment intelligence is ready.</h2><p>Once your channel is connected, only high-confidence genuine feedback enters memory. Spam, toxic bait, and uncertain classifications stay out of the learning loop.</p><div className="comment-rules"><span>✓ topic requests weighted by likes</span><span>✓ corrections re-verified against sources</span><span>✓ criticism is never deleted</span></div></>}</section></>
 }
 
 function ControlsPage({ overview, onControl, onForceRun, onConnect, onSync }) {
@@ -160,6 +162,7 @@ function App() {
   const [ops, setOps] = useState(null)
   const [series, setSeries] = useState([])
   const [experiments, setExperiments] = useState([])
+  const [commentsData, setCommentsData] = useState({ items: [], insights: {} })
   const [memory, setMemory] = useState({ items: [] })
   const [memoryQuery, setMemoryQuery] = useState('')
   const [events, setEvents] = useState([])
@@ -169,8 +172,8 @@ function App() {
   const load = useCallback(async () => {
     setRefreshing(true)
     try {
-      const [nextOverview, nextVideos, nextRuns, nextOps, nextSeries, nextExperiments, nextMemory, nextChannel] = await Promise.all([getOverview(), getVideos(), getRuns(), getOps(), getSeries(), getExperiments(), getMemory(), getYoutubeChannel().catch(() => null)])
-      setOverview(nextOverview); setChannel(nextChannel); setVideos(nextVideos); setRuns(nextRuns); setOps(nextOps); setSeries(nextSeries); setExperiments(nextExperiments); setMemory(nextMemory); setError('')
+      const [nextOverview, nextVideos, nextRuns, nextOps, nextSeries, nextExperiments, nextComments, nextMemory, nextChannel] = await Promise.all([getOverview(), getVideos(), getRuns(), getOps(), getSeries(), getExperiments(), getComments(), getMemory(), getYoutubeChannel().catch(() => null)])
+      setOverview(nextOverview); setChannel(nextChannel); setVideos(nextVideos); setRuns(nextRuns); setOps(nextOps); setSeries(nextSeries); setExperiments(nextExperiments); setCommentsData(nextComments); setMemory(nextMemory); setError('')
     } catch (loadError) { setError(loadError.message) } finally { setRefreshing(false) }
   }, [])
 
@@ -194,11 +197,11 @@ function App() {
     if (page === 'performance') return <PerformancePage overview={overview} videos={videos} />
     if (page === 'series') return <SeriesPage series={series} />
     if (page === 'experiments') return <ExperimentsPage experiments={experiments} />
-    if (page === 'comments') return <CommentsPage />
+    if (page === 'comments') return <CommentsPage commentsData={commentsData} />
     if (page === 'memory') return <MemoryPage memoryQuery={memoryQuery} setMemoryQuery={setMemoryQuery} memory={memory} searchMemory={searchMemory} />
     if (page === 'ops') return <OpsPage ops={ops} />
     return <ControlsPage overview={overview} onControl={handleControl} onForceRun={handleForceRun} onConnect={handleConnect} onSync={handleSync} />
-  }, [page, overview, runs, videos, events, series, experiments, memory, memoryQuery, ops])
+  }, [page, overview, runs, videos, events, series, experiments, commentsData, memory, memoryQuery, ops])
 
   return <div className="app-shell">
     <aside className="sidebar"><div className="brand"><div className="brand-mark">◈</div><div><b>orbit</b><span>YT AUTOMATION</span></div></div><div className="workspace-switch"><span className="workspace-avatar">{(channel?.snippet?.title || 'A').slice(0, 1).toUpperCase()}</span><div><b>{channel?.snippet?.title || 'Preview workspace'}</b><small>{channel ? 'YouTube channel' : 'Connect your channel'}</small></div><span className="workspace-chevron">⌄</span></div><nav>{nav.map((item) => <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)}><span className="nav-icon">{item.icon}</span>{item.label}{item.id === 'ops' && <i className="nav-alert" />}</button>)}</nav><div className="sidebar-bottom"><button className={page === 'controls' ? 'active' : ''} onClick={() => setPage('controls')}><span className="nav-icon">⚙</span>Autopilot</button><div className="connection"><i /><span><b>Backend connected</b><small>{refreshing ? 'Syncing now…' : 'Synced just now'}</small></span></div><div className="sidebar-version">ORBIT 0.1.0 <span>·</span> {overview?.automation?.mode === 'autopilot' ? 'AUTOPILOT' : 'PREVIEW'}</div></div></aside>

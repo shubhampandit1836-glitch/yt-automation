@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS videos (
     youtube_video_id TEXT UNIQUE,
     youtube_url TEXT,
     media_path TEXT,
+    thumbnail_variants_json TEXT NOT NULL DEFAULT '[]',
+    selected_thumbnail TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     published_at TEXT
@@ -154,6 +156,42 @@ CREATE TABLE IF NOT EXISTS provider_health (
     last_checked TEXT,
     error TEXT
 );
+CREATE TABLE IF NOT EXISTS comments (
+    id TEXT PRIMARY KEY,
+    youtube_comment_id TEXT UNIQUE NOT NULL,
+    youtube_video_id TEXT,
+    author TEXT,
+    text TEXT NOT NULL,
+    like_count INTEGER NOT NULL DEFAULT 0,
+    label TEXT NOT NULL DEFAULT 'unclassified',
+    confidence REAL NOT NULL DEFAULT 0,
+    reply_text TEXT,
+    replied_at TEXT,
+    moderation_status TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_items (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    embedding_json TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS playbook_rules (
+    id TEXT PRIMARY KEY,
+    component TEXT NOT NULL,
+    rule_text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'candidate',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    sample_size INTEGER NOT NULL DEFAULT 0,
+    confidence REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -208,6 +246,8 @@ class Database:
                 "youtube_video_id": "ALTER TABLE videos ADD COLUMN youtube_video_id TEXT",
                 "youtube_url": "ALTER TABLE videos ADD COLUMN youtube_url TEXT",
                 "media_path": "ALTER TABLE videos ADD COLUMN media_path TEXT",
+                "thumbnail_variants_json": "ALTER TABLE videos ADD COLUMN thumbnail_variants_json TEXT NOT NULL DEFAULT '[]'",
+                "selected_thumbnail": "ALTER TABLE videos ADD COLUMN selected_thumbnail TEXT",
             }
             for column, statement in migrations.items():
                 if column not in existing:
@@ -511,6 +551,8 @@ class Database:
             "youtube_video_id": payload.get("youtube_video_id"),
             "youtube_url": payload.get("youtube_url"),
             "media_path": payload.get("media_path"),
+            "thumbnail_variants_json": json_dumps(payload.get("thumbnail_variants", [])),
+            "selected_thumbnail": payload.get("selected_thumbnail"),
             "created_at": now,
             "updated_at": now,
             "published_at": payload.get("published_at"),
@@ -519,11 +561,12 @@ class Database:
             connection.execute(
                 """INSERT INTO videos(id, status, format, content_type, topic, title, slot, duration_seconds,
                 script, fact_sheet_json, qa_report_json, license_ledger_json, degradation_level, dry_run,
-                job_id, youtube_video_id, youtube_url, media_path, created_at, updated_at, published_at)
+                job_id, youtube_video_id, youtube_url, media_path, thumbnail_variants_json, selected_thumbnail,
+                created_at, updated_at, published_at)
                 VALUES (:id, :status, :format, :content_type, :topic, :title, :slot, :duration_seconds,
                 :script, :fact_sheet_json, :qa_report_json, :license_ledger_json, :degradation_level,
-                :dry_run, :job_id, :youtube_video_id, :youtube_url, :media_path, :created_at, :updated_at,
-                :published_at)""",
+                :dry_run, :job_id, :youtube_video_id, :youtube_url, :media_path, :thumbnail_variants_json,
+                :selected_thumbnail, :created_at, :updated_at, :published_at)""",
                 video,
             )
         return self._hydrate_video(video)
@@ -535,9 +578,10 @@ class Database:
             ("fact_sheet_json", "fact_sheet"),
             ("qa_report_json", "qa_report"),
             ("license_ledger_json", "license_ledger"),
+            ("thumbnail_variants_json", "thumbnail_variants"),
         ):
             if key in item:
-                item[target] = json_loads(item.pop(key), [] if "ledger" in target or "sheet" in target else {})
+                item[target] = json_loads(item.pop(key), [] if "ledger" in target or "sheet" in target or "thumbnail" in target else {})
         item["dry_run"] = bool(item.get("dry_run"))
         return item
 
@@ -554,6 +598,8 @@ class Database:
             "youtube_video_id",
             "youtube_url",
             "media_path",
+            "thumbnail_variants",
+            "selected_thumbnail",
             "fact_sheet",
             "qa_report",
             "license_ledger",
@@ -567,6 +613,7 @@ class Database:
                 "fact_sheet": "fact_sheet_json",
                 "qa_report": "qa_report_json",
                 "license_ledger": "license_ledger_json",
+                "thumbnail_variants": "thumbnail_variants_json",
             }.get(key, key)
             assignments.append(f"{db_key} = ?")
             values.append(json_dumps(value) if db_key.endswith("_json") else value)
@@ -621,6 +668,7 @@ class Database:
             connection.execute("DELETE FROM run_events")
             connection.execute("DELETE FROM runs")
             connection.execute("DELETE FROM jobs")
+            connection.execute("DELETE FROM memory_items")
         return {"videos_removed": len(video_ids), "demo_seed_removed": 1}
 
     def add_metric(self, video_id: str | None, values: dict[str, Any]) -> dict[str, Any]:
@@ -680,6 +728,62 @@ class Database:
             item["result"] = json_loads(item.pop("result_json"))  # type: ignore[union-attr]
             result.append(item)
         return result
+
+    def upsert_comment(
+        self,
+        *,
+        youtube_comment_id: str,
+        youtube_video_id: str | None,
+        author: str | None,
+        text: str,
+        like_count: int,
+        label: str,
+        confidence: float,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        comment = {
+            "id": str(uuid.uuid4()),
+            "youtube_comment_id": youtube_comment_id,
+            "youtube_video_id": youtube_video_id,
+            "author": author,
+            "text": text,
+            "like_count": like_count,
+            "label": label,
+            "confidence": confidence,
+            "created_at": now,
+            "updated_at": now,
+        }
+        with self.connection() as connection:
+            connection.execute(
+                """INSERT INTO comments(id, youtube_comment_id, youtube_video_id, author, text, like_count, label, confidence, created_at, updated_at)
+                VALUES (:id, :youtube_comment_id, :youtube_video_id, :author, :text, :like_count, :label, :confidence, :created_at, :updated_at)
+                ON CONFLICT(youtube_comment_id) DO UPDATE SET author=excluded.author, text=excluded.text,
+                like_count=excluded.like_count, label=excluded.label, confidence=excluded.confidence, updated_at=excluded.updated_at""",
+                comment,
+            )
+        return comment
+
+    def mark_comment_replied(self, youtube_comment_id: str, reply_text: str) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE comments SET reply_text = ?, replied_at = ?, updated_at = ? WHERE youtube_comment_id = ?",
+                (reply_text, utc_now(), utc_now(), youtube_comment_id),
+            )
+
+    def list_comments(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            rows = connection.execute("SELECT * FROM comments ORDER BY updated_at DESC LIMIT ?", (max(1, min(limit, 500)),)).fetchall()
+        return [self._row(row) for row in rows]  # type: ignore[misc]
+
+    def add_memory_item(self, *, kind: str, title: str, content: str, embedding: list[float] | None = None, metadata: dict[str, Any] | None = None) -> str:
+        item_id = str(uuid.uuid4())
+        now = utc_now()
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT INTO memory_items(id, kind, title, content, embedding_json, metadata_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (item_id, kind, title, content, json_dumps(embedding or []), json_dumps(metadata or {}), now, now),
+            )
+        return item_id
 
     def update_provider_health(
         self,

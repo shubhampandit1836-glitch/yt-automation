@@ -9,11 +9,14 @@ use the same nodes and durable events.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable, TypedDict
 
 from ..db import Database
 from ..events import EventBus
+from ..services.assets import AssetService, ThumbnailService
 from ..services.media import RenderService
+from ..services.memory import MemoryService
 from ..services.providers import ProviderRouter
 from ..services.research import ResearchService
 from ..services.youtube import YouTubeService
@@ -36,6 +39,8 @@ class PipelineState(TypedDict, total=False):
     script: str
     storyboard: list[dict[str, Any]]
     assets: list[dict[str, Any]]
+    thumbnail_variants: list[str]
+    selected_thumbnail: str
     qa_report: dict[str, Any]
     status: str
     degradation_level: str
@@ -43,6 +48,7 @@ class PipelineState(TypedDict, total=False):
     media_path: str
     duration_seconds: float
     publish_at: str
+    youtube_url: str
     error: str
 
 
@@ -60,6 +66,9 @@ class PipelineRunner:
         researcher: ResearchService | None = None,
         renderer: RenderService | None = None,
         youtube: YouTubeService | None = None,
+        thumbnails: ThumbnailService | None = None,
+        assets: AssetService | None = None,
+        memory: MemoryService | None = None,
     ) -> None:
         self.database = database
         self.events = events
@@ -67,6 +76,9 @@ class PipelineRunner:
         self.researcher = researcher
         self.renderer = renderer
         self.youtube = youtube
+        self.thumbnails = thumbnails
+        self.assets = assets
+        self.memory = memory
 
     def _emit(self, state: PipelineState, event_type: str, message: str, payload: dict[str, Any] | None = None) -> None:
         self.database.update_run(state["run_id"], node=state.get("current_node"), state=dict(state))
@@ -160,8 +172,28 @@ Return only the spoken script, under 130 words for a Short or under 900 words fo
             {"scene": 3, "intent": "loop", "visual": "verdict stamp", "duration": 3},
         ]
         state["assets"] = [{"type": "original_graphic", "license": "generated/local fixture"}]
+        if not state.get("dry_run") and self.assets:
+            try:
+                stock = self.assets.search(state["topic"], limit=3)
+                if stock:
+                    downloaded = self.assets.download(
+                        stock[0], self.assets.directory / state["video_id"] / "background.jpg"
+                    )
+                    state["assets"] = [downloaded]
+            except Exception as exc:  # noqa: BLE001 - stock is optional, original graphics remain safe
+                self._emit(state, "asset.warning", "Stock search unavailable; using original graphics", {"error": str(exc)})
+        if self.thumbnails:
+            variants = self.thumbnails.create_variants(video_id=state["video_id"], title=state["title"], topic=state["topic"])
+            state["thumbnail_variants"] = variants
+            state["selected_thumbnail"] = variants[0]
         self.database.update_video(
-            state["video_id"], title=state["title"], script=script, status="rendering", duration_seconds=14
+            state["video_id"],
+            title=state["title"],
+            script=script,
+            status="rendering",
+            duration_seconds=14,
+            thumbnail_variants=state.get("thumbnail_variants", []),
+            selected_thumbnail=state.get("selected_thumbnail"),
         )
         self._leave("creation", state, "Hinglish script and edit decision list drafted")
         return state
@@ -171,7 +203,8 @@ Return only the spoken script, under 130 words for a Short or under 900 words fo
         if not state.get("dry_run"):
             if not self.renderer:
                 raise RuntimeError("A TTS and FFmpeg renderer is required when DRY_RUN=false")
-            rendered = self.renderer.render_short(video_id=state["video_id"], script=state["script"])
+            background = next((item.get("local_path") for item in state.get("assets", []) if item.get("local_path")), None)
+            rendered = self.renderer.render_short(video_id=state["video_id"], script=state["script"], background_path=background)
             state["media_path"] = rendered["path"]
             state["duration_seconds"] = rendered["duration_seconds"]
             self.database.update_video(state["video_id"], media_path=rendered["path"], duration_seconds=rendered["duration_seconds"])
@@ -213,6 +246,13 @@ Return only the spoken script, under 130 words for a Short or under 900 words fo
         state["qa_report"] = report
         state["status"] = "qa_passed" if report["publishable"] else "blocked"
         self.database.update_video(state["video_id"], qa_report=report, status=state["status"])
+        if self.memory:
+            self.memory.upsert(
+                kind="script",
+                title=state.get("title", state["topic"]),
+                content=state.get("script", ""),
+                metadata={"video_id": state["video_id"], "content_type": state.get("content_type")},
+            )
         self._leave("qa", state, "Compliance gate evaluated; local mode remains safely blocked")
         return state
 
@@ -247,7 +287,10 @@ Return only the spoken script, under 130 words for a Short or under 900 words fo
             tags=[state["topic"], "gaming", "hinglish gaming", "gaming facts"],
             publish_at=publish_at,
         )
+        if state.get("selected_thumbnail"):
+            self.youtube.set_thumbnail(uploaded["id"], state["selected_thumbnail"])
         state["publish_at"] = publish_at
+        state["youtube_url"] = uploaded["url"]
         state["status"] = "scheduled"
         self.database.update_video(
             state["video_id"],

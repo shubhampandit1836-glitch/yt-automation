@@ -196,6 +196,31 @@ class YouTubeService:
             imported += 1
         return {"channel": channel, "videos_synced": imported, "synced_at": utc_now()}
 
+    def set_thumbnail(self, video_id: str, thumbnail_path: str) -> dict[str, Any]:
+        _, _, _, _, MediaFileUpload = self._imports()
+        return self._api().thumbnails().set(
+            videoId=video_id,
+            media_body=MediaFileUpload(thumbnail_path, mimetype="image/jpeg"),
+        ).execute()
+
+    def list_comments(self, video_id: str, *, max_results: int = 100) -> list[dict[str, Any]]:
+        response = self._api().commentThreads().list(
+            part="snippet,replies", videoId=video_id, maxResults=min(max_results, 100), textFormat="plainText"
+        ).execute()
+        return [
+            {
+                "id": item["id"],
+                **item.get("snippet", {}).get("topLevelComment", {}),
+            }
+            for item in response.get("items", [])
+        ]
+
+    def reply_to_comment(self, parent_id: str, text: str) -> dict[str, Any]:
+        return self._api().comments().insert(
+            part="snippet",
+            body={"snippet": {"parentId": parent_id, "textOriginal": text[:10000]}},
+        ).execute()
+
     def analytics_snapshot(self, *, days: int = 28) -> dict[str, Any]:
         end = datetime.now(UTC).date()
         start = end - timedelta(days=days)

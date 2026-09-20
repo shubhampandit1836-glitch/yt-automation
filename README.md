@@ -119,10 +119,9 @@ frontend/src/
 
 ## Next implementation seams
 
-- Postgres migrations, advisory lock and pgvector retriever;
-- Whisper word alignment, richer image/stock/music asset workers and thumbnail variants;
-- Telegram notifications and external heartbeat pings;
-- Analytics snapshots, comment intelligence and the signal-ladder learning loop;
-- policy-notice email parsing and deeper auto-pause rules.
+- Postgres migrations, advisory lock and native pgvector storage;
+- richer image/music/gameplay asset workers and thumbnail vision scoring;
+- policy-notice email parsing and deeper auto-pause rules;
+- Reporting API bulk exports and more statistical bandit guardrails.
 
 Those integrations should each land behind the existing interfaces and add an acceptance test before being enabled in production.

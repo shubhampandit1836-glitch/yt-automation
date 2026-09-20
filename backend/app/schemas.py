@@ -80,6 +80,8 @@ class VideoResponse(BaseModel):
     youtube_video_id: str | None = None
     youtube_url: str | None = None
     media_path: str | None = None
+    thumbnail_variants: list[str] = Field(default_factory=list)
+    selected_thumbnail: str | None = None
     metrics: list[dict[str, Any]] = Field(default_factory=list)
 
 

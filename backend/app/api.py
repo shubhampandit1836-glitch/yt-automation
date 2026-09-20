@@ -25,13 +25,17 @@ from .schemas import (
     RunResponse,
     VideoResponse,
 )
+from .services.assets import AssetService
 from .services.governor import ResourceGovernor
+from .services.memory import MemoryService
 from .services.youtube import YouTubeNotConfigured, YouTubeService
 
 
 def build_router(database: Database, events: EventBus, governor: ResourceGovernor, settings: Settings) -> APIRouter:
     router = APIRouter(prefix="/api/v1")
     youtube = YouTubeService(database, settings)
+    memory = MemoryService(database, settings.gemini_api_key, settings.gemini_embedding_model)
+    assets = AssetService(settings.asset_dir, settings.pexels_api_key, settings.pixabay_api_key)
 
     def owner_guard(x_owner_email: str | None = Header(default=None)) -> str:
         # Production deployments must put Google/Cloudflare Access in front of
@@ -198,21 +202,38 @@ def build_router(database: Database, events: EventBus, governor: ResourceGoverno
         return database.list_experiments()
 
     @router.get("/comments")
-    def comments() -> dict[str, Any]:
-        return {"items": [], "insights": [], "message": "Comment adapter not configured"}
+    def comments(limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
+        items = database.list_comments(limit)
+        return {
+            "items": items,
+            "insights": {
+                "requests": sum(item["label"] == "request" for item in items),
+                "corrections": sum(item["label"] == "factual_correction" for item in items),
+                "spam": sum(item["label"] == "spam" for item in items),
+                "replies": sum(bool(item.get("replied_at")) for item in items),
+            },
+            "message": "Comments are classified by the worker; uncertain comments stay out of memory.",
+        }
 
     @router.get("/memory/search")
     def memory_search(q: str = Query(default="", max_length=200)) -> dict[str, Any]:
-        # pgvector-backed semantic retrieval is a replaceable repository. This
-        # endpoint is already useful for explaining the current local memory.
-        memories = [
-            {"kind": "style", "title": "Hinglish style guide", "snippet": "Short, friendly, sourced, no creator imitation."},
-            {"kind": "policy", "title": "Safe default", "snippet": "Unverified claims are blocked rather than softened."},
-            {"kind": "series", "title": "Myth Busted", "snippet": "Pilot series with a verdict stamp and source card."},
-        ]
-        if q:
-            memories = [item for item in memories if q.lower() in f"{item['title']} {item['snippet']}".lower()]
-        return {"query": q, "items": memories, "backend": "structured-local-memory"}
+        memories = memory.search(q, 20) if q else memory.search("", 20)
+        if not memories:
+            memories = [
+                {"kind": "style", "title": "Hinglish style guide", "content": "Short, friendly, sourced, no creator imitation.", "score": 0},
+                {"kind": "policy", "title": "Safe default", "content": "Unverified claims are blocked rather than softened.", "score": 0},
+            ]
+        return {"query": q, "items": memories, "backend": "gemini-embedding-with-local-cosine-fallback"}
+
+    @router.get("/playbook")
+    def playbook() -> dict[str, Any]:
+        with database.connection() as connection:
+            rows = connection.execute("SELECT * FROM playbook_rules ORDER BY updated_at DESC").fetchall()
+        return {"rules": [dict(row) for row in rows]}
+
+    @router.get("/assets/search")
+    def assets_search(q: str = Query(..., min_length=2, max_length=120)) -> dict[str, Any]:
+        return {"query": q, "items": assets.search(q), "licensed": True}
 
     @router.get("/ops")
     def ops() -> dict[str, Any]:

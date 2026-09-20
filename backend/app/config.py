@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_path: str = "./data/yt_automation.db"
     media_dir: str = "./data/media"
+    asset_dir: str = "./data/assets"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     cors_origins: Annotated[list[str], BeforeValidator(_split_origins)] = Field(
@@ -37,8 +38,13 @@ class Settings(BaseSettings):
     # Provider configuration. Empty values are safe and do not trigger a call.
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
+    gemini_embedding_model: str = "gemini-embedding-001"
     groq_api_key: str | None = None
+    pexels_api_key: str | None = None
+    pixabay_api_key: str | None = None
     tts_voice: str = "hi-IN-SwaraNeural"
+    comment_replies_enabled: bool = False
+    comment_max_replies: int = 3
     rss_urls: str = (
         "https://news.google.com/rss/search?q=gaming&hl=en-IN&gl=IN&ceid=IN:en,"
         "https://www.pcgamer.com/rss/,https://www.eurogamer.net/feed"

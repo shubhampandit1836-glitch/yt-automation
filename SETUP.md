@@ -40,12 +40,17 @@ Do not share secrets in chat. Add them only to `/home/user/yt-automation/.env` o
 | Capability | Where to get it | Environment variable / storage | Status in this repo |
 | --- | --- | --- | --- |
 | Gemini | [Google AI Studio API keys](https://aistudio.google.com/apikey) | `GEMINI_API_KEY` | Active for research and scripts |
-| Groq / Whisper | [Groq Console](https://console.groq.com/keys) | `GROQ_API_KEY` | Reserved fallback; Whisper alignment is next |
+| Groq / Whisper | [Groq Console](https://console.groq.com/keys) | `GROQ_API_KEY` | Active word alignment when configured |
 | YouTube upload and Analytics | [Google Cloud Console](https://console.cloud.google.com/) | OAuth client JSON plus refresh token storage | Active: connect from Autopilot page |
 | TTS | Edge TTS voice service | `TTS_VOICE` | Active fallback; unofficial endpoint |
+| Whisper alignment | [Groq Console](https://console.groq.com/keys) | `GROQ_API_KEY` | Active when configured; deterministic timing fallback otherwise |
+| Stock assets | [Pexels API](https://www.pexels.com/api/) or [Pixabay API](https://pixabay.com/api/docs/) | `PEXELS_API_KEY`, `PIXABAY_API_KEY` | Active optional licensed search |
+| Thumbnails | Pillow local renderer | `ASSET_DIR` | Active: three variants per video |
 | FFmpeg | System package / Docker image | `ffmpeg` executable | Active renderer |
-| Telegram alerts | [@BotFather](https://t.me/BotFather) for the bot token; chat ID from the Bot API `getUpdates` response | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Notification adapter next |
-| External dead-man heartbeat | [Healthchecks.io](https://healthchecks.io/) | `HEALTHCHECKS_HEARTBEAT_URL` | Heartbeat adapter next |
+| Telegram alerts | [@BotFather](https://t.me/BotFather) for the bot token; chat ID from the Bot API `getUpdates` response | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Active on publish/failure when configured |
+| External dead-man heartbeat | [Healthchecks.io](https://healthchecks.io/) | `HEALTHCHECKS_HEARTBEAT_URL` | Active on worker watchdog cycles |
+| Long-term memory | Gemini embeddings with local cosine fallback | `GEMINI_API_KEY`, `GEMINI_EMBEDDING_MODEL` | Active in Memory page |
+| Learning/playbook | Local evidence tables and guardrails | none | Active daily worker cycle |
 | Cloud database | [Neon](https://neon.tech/) or [Supabase](https://supabase.com/) | Future `DATABASE_URL` / migration config | SQLite is active now |
 
 ## Google / YouTube one-time setup

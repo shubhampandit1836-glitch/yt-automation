@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .alignment import AlignmentService
+
 
 class MediaNotConfigured(RuntimeError):
     pass
@@ -39,9 +41,10 @@ class RenderService:
     changing the YouTube upload contract.
     """
 
-    def __init__(self, media_dir: str, voice: str = "hi-IN-SwaraNeural") -> None:
+    def __init__(self, media_dir: str, voice: str = "hi-IN-SwaraNeural", groq_api_key: str | None = None) -> None:
         self.media_dir = Path(media_dir)
         self.tts = TTSService(voice)
+        self.alignment = AlignmentService(groq_api_key)
 
     @staticmethod
     def _duration(text: str) -> float:
@@ -50,7 +53,7 @@ class RenderService:
         words = max(1, len(text.split()))
         return max(8.0, min(58.0, words / 2.25))
 
-    def render_short(self, *, video_id: str, script: str) -> dict[str, Any]:
+    def render_short(self, *, video_id: str, script: str, background_path: str | None = None) -> dict[str, Any]:
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             raise MediaNotConfigured("FFmpeg is not installed; install it with apt install ffmpeg")
@@ -60,28 +63,32 @@ class RenderService:
         output = folder / "video.mp4"
         subtitles = folder / "captions.srt"
         duration = self._duration(script)
-        words = script.split()
-        chunk_size = 4
-        lines = [" ".join(words[index : index + chunk_size]) for index in range(0, len(words), chunk_size)]
-        step = duration / max(1, len(lines))
+        aligned = self.alignment.align(audio, script, duration)
+        groups = [aligned[index : index + 4] for index in range(0, len(aligned), 4)]
         def stamp(seconds: float) -> str:
             whole = int(seconds)
             return f"00:{whole // 60:02d}:{whole % 60:02d},{int((seconds % 1) * 1000):03d}"
         subtitles.write_text(
             "\n\n".join(
-                f"{index + 1}\n{stamp(index * step)} --> {stamp(min(duration, (index + 1) * step))}\n{line}"
-                for index, line in enumerate(lines)
+                f"{index + 1}\n{stamp(group[0]['start'])} --> {stamp(min(duration, group[-1]['end']))}\n{' '.join(item['word'] for item in group)}"
+                for index, group in enumerate(groups) if group
             ),
             encoding="utf-8",
         )
         subtitle_filter = str(subtitles).replace("\\", "/").replace(":", "\\:")
-        command = [
-            ffmpeg,
-            "-y",
-            "-f", "lavfi",
-            "-i", "color=c=0x10231b:s=1080x1920:r=30",
-            "-i", str(audio),
-            "-vf", f"subtitles='{subtitle_filter}':force_style='FontName=DejaVu Sans,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H0010231B,BorderStyle=3,Outline=2,MarginV=260'",
+        subtitle_style = "subtitles='" + subtitle_filter + "':force_style='FontName=DejaVu Sans,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H0010231B,BorderStyle=3,Outline=2,MarginV=260'"
+        if background_path and Path(background_path).exists():
+            command = [
+                ffmpeg, "-y", "-loop", "1", "-i", background_path, "-i", str(audio),
+                "-filter_complex", f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,{subtitle_style}[v]",
+                "-map", "[v]", "-map", "1:a", "-shortest",
+            ]
+        else:
+            command = [
+                ffmpeg, "-y", "-f", "lavfi", "-i", "color=c=0x10231b:s=1080x1920:r=30", "-i", str(audio),
+                "-vf", subtitle_style,
+            ]
+        command.extend([
             "-t", f"{duration:.2f}",
             "-c:v", "libx264",
             "-preset", "veryfast",
@@ -90,7 +97,7 @@ class RenderService:
             "-b:a", "128k",
             "-movflags", "+faststart",
             str(output),
-        ]
+        ])
         result = subprocess.run(command, capture_output=True, text=True, timeout=180)
         if result.returncode:
             raise MediaNotConfigured(f"FFmpeg render failed: {result.stderr[-800:]}")
