@@ -20,6 +20,10 @@ export const getOps = () => request('/ops')
 export const getSeries = () => request('/series')
 export const getExperiments = () => request('/experiments')
 export const getMemory = (query = '') => request(`/memory/search?q=${encodeURIComponent(query)}`)
+export const getYoutubeStatus = () => request('/auth/youtube/status')
+export const getYoutubeChannel = () => request('/channel')
+export const getYoutubeAuthUrl = () => request('/auth/youtube/start')
+export const syncYoutubeChannel = () => request('/channel/sync', { method: 'POST', body: JSON.stringify({}) })
 
 export const forceRun = (payload) => request('/controls/force-run', {
   method: 'POST',

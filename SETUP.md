@@ -33,23 +33,24 @@ ENABLE_SCHEDULER=true python -m backend.app.scheduler
 
 ## What must be added before real automation
 
-The current repository is an executable architecture scaffold. Its default graph is intentionally blocked at QA and does not make external calls. Adding a key alone does **not** enable uploads yet; each external adapter still needs to be implemented and tested behind the existing seams.
+The repository now includes the real YouTube OAuth/channel-sync adapter, Gemini structured research adapter, Edge TTS fallback, and FFmpeg rendering path. It still defaults to a safe preview. You must complete OAuth, install FFmpeg, configure a research key, and test a private upload before enabling scheduled publishing. Adding a key alone is not enough: the provider must pass the QA gates.
 
 Do not share secrets in chat. Add them only to `/home/user/yt-automation/.env` on the machine running the app. `.env` is ignored by Git.
 
 | Capability | Where to get it | Environment variable / storage | Status in this repo |
 | --- | --- | --- | --- |
-| Gemini | [Google AI Studio API keys](https://aistudio.google.com/apikey) | `GEMINI_API_KEY` | Provider adapter pending |
-| Groq / Whisper | [Groq Console](https://console.groq.com/keys) | `GROQ_API_KEY` | Provider adapter pending |
-| YouTube upload and Analytics | [Google Cloud Console](https://console.cloud.google.com/) | OAuth client JSON plus refresh token storage | OAuth/upload adapter pending |
-| Telegram alerts | [@BotFather](https://t.me/BotFather) for the bot token; chat ID from the Bot API `getUpdates` response | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Alert adapter pending |
-| External dead-man heartbeat | [Healthchecks.io](https://healthchecks.io/) | `HEALTHCHECKS_HEARTBEAT_URL` | Heartbeat adapter pending |
+| Gemini | [Google AI Studio API keys](https://aistudio.google.com/apikey) | `GEMINI_API_KEY` | Active for research and scripts |
+| Groq / Whisper | [Groq Console](https://console.groq.com/keys) | `GROQ_API_KEY` | Reserved fallback; Whisper alignment is next |
+| YouTube upload and Analytics | [Google Cloud Console](https://console.cloud.google.com/) | OAuth client JSON plus refresh token storage | Active: connect from Autopilot page |
+| TTS | Edge TTS voice service | `TTS_VOICE` | Active fallback; unofficial endpoint |
+| FFmpeg | System package / Docker image | `ffmpeg` executable | Active renderer |
+| Telegram alerts | [@BotFather](https://t.me/BotFather) for the bot token; chat ID from the Bot API `getUpdates` response | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Notification adapter next |
+| External dead-man heartbeat | [Healthchecks.io](https://healthchecks.io/) | `HEALTHCHECKS_HEARTBEAT_URL` | Heartbeat adapter next |
 | Cloud database | [Neon](https://neon.tech/) or [Supabase](https://supabase.com/) | Future `DATABASE_URL` / migration config | SQLite is active now |
-| Media and TTS providers | Provider consoles linked in the master plan | Future provider-specific variables | Adapter seams only |
 
 ## Google / YouTube one-time setup
 
-When the YouTube adapter is implemented:
+The dashboard's **Autopilot → Connect YouTube** button starts this flow once the OAuth client file exists:
 
 1. Create a Google Cloud project.
 2. Enable YouTube Data API v3, YouTube Analytics API and YouTube Reporting API. Enable Gmail API only if notification parsing is desired.
@@ -57,7 +58,8 @@ When the YouTube adapter is implemented:
 4. Create an OAuth client for the owner account and authorize the channel once with upload, comment, analytics and reporting scopes.
 5. Keep the client JSON and refresh token outside Git, for example under a secrets mount on the VM. Do not put them in `frontend/` or commit them.
 6. Complete Google's YouTube API compliance/audit process before expecting non-private scheduled uploads.
-7. Keep `DRY_RUN=true` until a resumable, idempotent private upload has passed an end-to-end test.
+7. Install FFmpeg locally (`sudo apt-get install ffmpeg`) or run the included Docker image, which installs FFmpeg automatically.
+8. Keep `DRY_RUN=true` until a resumable, idempotent private upload has passed an end-to-end test.
 
 ## Safe activation order
 

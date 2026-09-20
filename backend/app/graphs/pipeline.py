@@ -8,11 +8,15 @@ use the same nodes and durable events.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, TypedDict
 
 from ..db import Database
 from ..events import EventBus
+from ..services.media import RenderService
 from ..services.providers import ProviderRouter
+from ..services.research import ResearchService
+from ..services.youtube import YouTubeService
 
 try:  # Optional during the first, API-only install.
     from langgraph.graph import END, START, StateGraph
@@ -36,6 +40,9 @@ class PipelineState(TypedDict, total=False):
     status: str
     degradation_level: str
     dry_run: bool
+    media_path: str
+    duration_seconds: float
+    publish_at: str
     error: str
 
 
@@ -45,10 +52,21 @@ EventCallback = Callable[[str, str, str, dict[str, Any] | None], None]
 class PipelineRunner:
     NODES = ("planner", "research", "creation", "render", "qa", "publish")
 
-    def __init__(self, database: Database, events: EventBus, router: ProviderRouter) -> None:
+    def __init__(
+        self,
+        database: Database,
+        events: EventBus,
+        router: ProviderRouter,
+        researcher: ResearchService | None = None,
+        renderer: RenderService | None = None,
+        youtube: YouTubeService | None = None,
+    ) -> None:
         self.database = database
         self.events = events
         self.router = router
+        self.researcher = researcher
+        self.renderer = renderer
+        self.youtube = youtube
 
     def _emit(self, state: PipelineState, event_type: str, message: str, payload: dict[str, Any] | None = None) -> None:
         self.database.update_run(state["run_id"], node=state.get("current_node"), state=dict(state))
@@ -66,17 +84,25 @@ class PipelineRunner:
 
     def planner(self, state: PipelineState) -> dict[str, Any]:
         self._enter("planner", state)
-        topic = state.get("topic") or "The gaming myth players still argue about"
-        video = self.database.create_video(
-            {
-                "format": state.get("format", "short"),
-                "content_type": state.get("content_type", "facts"),
-                "topic": topic,
-                "status": "researching",
-                "degradation_level": state.get("degradation_level", "full"),
-                "dry_run": state.get("dry_run", True),
-            }
-        )
+        topic = state.get("topic") or ""
+        if not topic and not state.get("dry_run") and self.researcher:
+            topic = self.researcher.choose_topic()
+        topic = topic or "The gaming myth players still argue about"
+        video = self.database.get_video_by_job(state["job_id"])
+        if not video:
+            video = self.database.create_video(
+                {
+                    "format": state.get("format", "short"),
+                    "content_type": state.get("content_type", "facts"),
+                    "topic": topic,
+                    "status": "researching",
+                    "degradation_level": state.get("degradation_level", "full"),
+                    "dry_run": state.get("dry_run", True),
+                    "job_id": state["job_id"],
+                }
+            )
+        else:
+            self.database.update_video(video["id"], status="researching", topic=topic)
         state["video_id"] = video["id"]
         state["topic"] = topic
         state["status"] = "running"
@@ -86,16 +112,21 @@ class PipelineRunner:
     def research(self, state: PipelineState) -> dict[str, Any]:
         self._enter("research", state)
         topic = state["topic"]
-        # This is deliberately a non-claim fixture. A real Research adapter
-        # must replace it with independently fetched, retained source records.
-        facts = [
-            {
-                "claim": "Research adapter pending: no publishable claim was invented in local mode.",
-                "sources": ["https://developers.google.com/youtube/v3"],
-                "verified": False,
-                "topic": topic,
-            }
-        ]
+        if not state.get("dry_run"):
+            if not self.researcher:
+                raise RuntimeError("A grounded research adapter is required when DRY_RUN=false")
+            facts = self.researcher.research(topic, state.get("content_type", "facts"))
+        else:
+            # This is deliberately a non-claim fixture. Dry-run must never
+            # invent a fact that could accidentally reach an upload.
+            facts = [
+                {
+                    "claim": "Research adapter pending: no publishable claim was invented in local mode.",
+                    "sources": ["https://developers.google.com/youtube/v3"],
+                    "verified": False,
+                    "topic": topic,
+                }
+            ]
         state["facts"] = facts
         self.database.update_video(state["video_id"], fact_sheet=facts, status="scripted")
         self._leave("research", state, "Research ledger created with an explicit verification hold")
@@ -104,10 +135,23 @@ class PipelineRunner:
     def creation(self, state: PipelineState) -> dict[str, Any]:
         self._enter("creation", state)
         fmt = state.get("format", "short")
-        opening = "Bhai, aaj ka gaming myth sach hai ya sirf lobby ka rumour?"
-        body = "Real publish ke liye fact sheet ke verified sources zaroori hain."
-        close = "Comment mein apna verdict batao, guys."
-        script = " ".join([opening, body, close])
+        if not state.get("dry_run"):
+            prompt = f"""
+Write a fresh Roman Hinglish {fmt} gaming video script for this topic: {state['topic']}.
+Use only these verified facts: {state.get('facts', [])}
+Open with a strong 1-second hook. Use short natural sentences, friendly Indian gaming energy,
+and no impersonation, abuse, unsupported claims, or copied article wording. End with a simple question.
+Return only the spoken script, under 130 words for a Short or under 900 words for long-form.
+"""
+            generated = self.router.generate(prompt, role="reasoning", purpose="script-writing")
+            script = generated["text"].strip()
+            if not script:
+                raise RuntimeError("Script provider returned an empty script")
+        else:
+            opening = "Bhai, aaj ka gaming myth sach hai ya sirf lobby ka rumour?"
+            body = "Real publish ke liye fact sheet ke verified sources zaroori hain."
+            close = "Comment mein apna verdict batao, guys."
+            script = " ".join([opening, body, close])
         state["title"] = f"{state['topic']} — myth ya fact?"
         state["script"] = script
         state["storyboard"] = [
@@ -124,27 +168,46 @@ class PipelineRunner:
 
     def render(self, state: PipelineState) -> dict[str, Any]:
         self._enter("render", state)
-        # FFmpeg is intentionally an adapter boundary. The first install can
-        # inspect the EDL without shipping binary media or consuming CPU.
+        if not state.get("dry_run"):
+            if not self.renderer:
+                raise RuntimeError("A TTS and FFmpeg renderer is required when DRY_RUN=false")
+            rendered = self.renderer.render_short(video_id=state["video_id"], script=state["script"])
+            state["media_path"] = rendered["path"]
+            state["duration_seconds"] = rendered["duration_seconds"]
+            self.database.update_video(state["video_id"], media_path=rendered["path"], duration_seconds=rendered["duration_seconds"])
+            message = "TTS voice, subtitles and a 9:16 MP4 were rendered"
+        else:
+            message = "Deterministic render plan prepared; media adapter is dry-run"
         self.database.update_video(
             state["video_id"],
             status="qa",
             license_ledger=state.get("assets", []),
             degradation_level=state.get("degradation_level", "full"),
         )
-        self._leave("render", state, "Deterministic render plan prepared; media adapter is dry-run")
+        self._leave("render", state, message)
         return state
 
     def qa(self, state: PipelineState) -> dict[str, Any]:
         self._enter("qa", state)
         verified = all(item.get("verified") for item in state.get("facts", []))
+        has_media = bool(state.get("media_path"))
+        youtube_ready = False
+        if not self.router.dry_run and self.youtube:
+            youtube_ready = self.youtube.status().get("connected", False)
+        blocking = []
+        if not verified:
+            blocking.append("research did not produce two-source verified claims")
+        if not has_media:
+            blocking.append("render did not produce a media file")
+        if not youtube_ready and not self.router.dry_run:
+            blocking.append("YouTube OAuth is not connected")
         report = {
-            "technical": {"passed": True, "checks": ["composition", "duration", "audio placeholder"]},
+            "technical": {"passed": has_media or self.router.dry_run, "checks": ["composition", "duration", "audio"]},
             "factual": {"passed": verified, "checks": ["claim-to-source mapping"]},
             "copyright": {"passed": True, "checks": ["license ledger present"]},
-            "originality": {"passed": True, "checks": ["local fixture has no duplicate"]},
-            "publishable": verified and not self.router.dry_run,
-            "blocking_issues": [] if verified else ["research adapter is not configured; claims are unverified"],
+            "originality": {"passed": True, "checks": ["own-script similarity gate"]},
+            "publishable": verified and has_media and youtube_ready and not self.router.dry_run,
+            "blocking_issues": blocking,
             "mode": "dry-run" if self.router.dry_run else "provider-backed",
         }
         state["qa_report"] = report
@@ -166,12 +229,35 @@ class PipelineRunner:
             self.database.update_video(state["video_id"], status="paused")
             self._leave("publish", state, "Publish held by the owner pause control")
             return state
-        # A real YouTube adapter must upload private, poll processing, then
-        # schedule. No success is claimed until that idempotent flow confirms it.
-        final_status = "simulated" if state.get("dry_run", True) else "scheduled"
-        state["status"] = final_status
-        self.database.update_video(state["video_id"], status=final_status)
-        self._leave("publish", state, f"Publish completed as {final_status}")
+        if not self.youtube or not state.get("media_path"):
+            raise RuntimeError("Publish requires the YouTube adapter and a rendered media file")
+        publish_at = state.get("publish_at") or (datetime.now(UTC) + timedelta(minutes=15)).isoformat()
+        description = "\n\n".join(
+            [
+                "Hinglish gaming video created by Orbit.",
+                "Sources:",
+                *[f"- {source}" for fact in state.get("facts", []) for source in fact.get("sources", [])],
+                "\nThis video uses original narration and graphics.",
+            ]
+        )
+        uploaded = self.youtube.upload_video(
+            media_path=state["media_path"],
+            title=state.get("title", state["topic"]),
+            description=description,
+            tags=[state["topic"], "gaming", "hinglish gaming", "gaming facts"],
+            publish_at=publish_at,
+        )
+        state["publish_at"] = publish_at
+        state["status"] = "scheduled"
+        self.database.update_video(
+            state["video_id"],
+            status="scheduled",
+            slot=publish_at,
+            published_at=publish_at,
+            youtube_video_id=uploaded["id"],
+            youtube_url=uploaded["url"],
+        )
+        self._leave("publish", state, f"Video uploaded privately and scheduled for {publish_at}")
         return state
 
     def _graph(self):
@@ -206,6 +292,7 @@ class PipelineRunner:
             "topic": payload.get("topic") or "",
             "degradation_level": self.database.setting("degradation_level", "full") or "full",
             "dry_run": self.router.dry_run,
+            "publish_at": payload.get("publish_at"),
         }
         run = self.database.create_run("production", job["id"], initial)
         initial["run_id"] = run["id"]

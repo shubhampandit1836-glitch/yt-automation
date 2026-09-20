@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from html import escape
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from .config import Settings
 from .db import Database, utc_now
@@ -25,10 +26,12 @@ from .schemas import (
     VideoResponse,
 )
 from .services.governor import ResourceGovernor
+from .services.youtube import YouTubeNotConfigured, YouTubeService
 
 
 def build_router(database: Database, events: EventBus, governor: ResourceGovernor, settings: Settings) -> APIRouter:
     router = APIRouter(prefix="/api/v1")
+    youtube = YouTubeService(database, settings)
 
     def owner_guard(x_owner_email: str | None = Header(default=None)) -> str:
         # Production deployments must put Google/Cloudflare Access in front of
@@ -50,11 +53,54 @@ def build_router(database: Database, events: EventBus, governor: ResourceGoverno
             timestamp=datetime.now(UTC),
         )
 
+    @router.get("/auth/youtube/status")
+    def youtube_auth_status() -> dict[str, Any]:
+        return youtube.status()
+
+    @router.get("/auth/youtube/start")
+    def youtube_auth_start(_: str = Depends(owner_guard)) -> dict[str, Any]:
+        try:
+            return {"authorization_url": youtube.authorization_url()}
+        except YouTubeNotConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.get("/auth/youtube/callback", response_class=HTMLResponse)
+    def youtube_auth_callback(code: str, state: str | None = None) -> HTMLResponse:
+        try:
+            channel = youtube.complete_authorization(code, state)
+        except YouTubeNotConfigured as exc:
+            return HTMLResponse(f"<h1>YouTube connection failed</h1><p>{exc}</p>", status_code=400)
+        title = escape(channel.get("snippet", {}).get("title", "channel"))
+        return HTMLResponse(
+            f"<h1>YouTube connected</h1><p>{title} is connected. You can close this tab.</p>"
+        )
+
+    @router.get("/channel")
+    def channel() -> dict[str, Any]:
+        try:
+            return youtube.get_channel()
+        except YouTubeNotConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.post("/channel/sync")
+    def channel_sync(_: str = Depends(owner_guard)) -> dict[str, Any]:
+        try:
+            return youtube.sync_channel()
+        except YouTubeNotConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.get("/channel/analytics")
+    def channel_analytics(_: str = Depends(owner_guard)) -> dict[str, Any]:
+        try:
+            return youtube.analytics_snapshot()
+        except YouTubeNotConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     @router.get("/overview")
     def overview() -> dict[str, Any]:
+        youtube_status = youtube.status()
         data = database.overview()
-        youtube = next((item for item in data["providers"] if item["provider"] == "youtube"), None)
-        ready = bool(not settings.dry_run and youtube and youtube["status"] == "healthy")
+        ready = bool(not settings.dry_run and youtube_status.get("connected"))
         data["automation"] = {
             "mode": "autopilot" if ready else ("setup" if not settings.dry_run else "preview"),
             "ready": ready,

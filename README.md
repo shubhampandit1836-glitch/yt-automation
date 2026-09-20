@@ -19,7 +19,7 @@ A safe-by-default control plane for the autonomous Hinglish gaming channel descr
 - owner control endpoints for pause, resume, kill switch and force-run;
 - responsive dark monitoring UI with Overview, Videos, Performance, Series, Experiments, Comments, Memory, Ops and Controls pages.
 
-Provider, YouTube, FFmpeg, OAuth, pgvector and real embedding adapters are intentionally seams rather than fake implementations. Wire each adapter and pass its own QA contract before changing `DRY_RUN=false`.
+YouTube OAuth/channel sync, Gemini structured research, Edge TTS and an FFmpeg renderer are wired behind explicit adapters. Postgres/pgvector, Analytics deep snapshots, Telegram/heartbeat and Whisper alignment remain staged integrations. Each adapter must pass its QA contract before changing `DRY_RUN=false`.
 
 ## Quick start
 
@@ -117,12 +117,10 @@ frontend/src/
 
 ## Next implementation seams
 
-- Google OAuth and resumable YouTube upload idempotency;
-- grounded research adapters with retained evidence records;
-- FFmpeg/Pillow renderer and Whisper alignment;
 - Postgres migrations, advisory lock and pgvector retriever;
-- real TTS, image, stock and Telegram adapters with quota telemetry;
+- Whisper word alignment, richer image/stock/music asset workers and thumbnail variants;
+- Telegram notifications and external heartbeat pings;
 - Analytics snapshots, comment intelligence and the signal-ladder learning loop;
-- external heartbeat pings and policy-notice email parsing.
+- policy-notice email parsing and deeper auto-pause rules.
 
 Those integrations should each land behind the existing interfaces and add an acceptance test before being enabled in production.

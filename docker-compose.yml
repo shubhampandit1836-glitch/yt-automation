@@ -9,6 +9,7 @@ services:
       - "8000:8000"
     volumes:
       - app-data:/app/data
+      - ./secrets:/app/secrets
   worker:
     build:
       context: .
@@ -17,6 +18,7 @@ services:
     env_file: .env
     volumes:
       - app-data:/app/data
+      - ./secrets:/app/secrets
     depends_on: [api]
   scheduler:
     build:

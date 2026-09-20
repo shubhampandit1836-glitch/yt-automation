@@ -95,6 +95,10 @@ CREATE TABLE IF NOT EXISTS videos (
     license_ledger_json TEXT NOT NULL DEFAULT '[]',
     degradation_level TEXT NOT NULL DEFAULT 'full',
     dry_run INTEGER NOT NULL DEFAULT 1,
+    job_id TEXT,
+    youtube_video_id TEXT UNIQUE,
+    youtube_url TEXT,
+    media_path TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     published_at TEXT
@@ -197,6 +201,17 @@ class Database:
     def _initialize(self) -> None:
         with self.connection() as connection:
             connection.executescript(SCHEMA)
+            # Lightweight migrations keep an existing local install usable.
+            existing = {row["name"] for row in connection.execute("PRAGMA table_info(videos)").fetchall()}
+            migrations = {
+                "job_id": "ALTER TABLE videos ADD COLUMN job_id TEXT",
+                "youtube_video_id": "ALTER TABLE videos ADD COLUMN youtube_video_id TEXT",
+                "youtube_url": "ALTER TABLE videos ADD COLUMN youtube_url TEXT",
+                "media_path": "ALTER TABLE videos ADD COLUMN media_path TEXT",
+            }
+            for column, statement in migrations.items():
+                if column not in existing:
+                    connection.execute(statement)
             self._seed(connection)
 
     @staticmethod
@@ -492,6 +507,10 @@ class Database:
             "license_ledger_json": json_dumps(payload.get("license_ledger", [])),
             "degradation_level": payload.get("degradation_level", "full"),
             "dry_run": int(payload.get("dry_run", True)),
+            "job_id": payload.get("job_id"),
+            "youtube_video_id": payload.get("youtube_video_id"),
+            "youtube_url": payload.get("youtube_url"),
+            "media_path": payload.get("media_path"),
             "created_at": now,
             "updated_at": now,
             "published_at": payload.get("published_at"),
@@ -500,9 +519,11 @@ class Database:
             connection.execute(
                 """INSERT INTO videos(id, status, format, content_type, topic, title, slot, duration_seconds,
                 script, fact_sheet_json, qa_report_json, license_ledger_json, degradation_level, dry_run,
-                created_at, updated_at, published_at) VALUES (:id, :status, :format, :content_type, :topic,
-                :title, :slot, :duration_seconds, :script, :fact_sheet_json, :qa_report_json,
-                :license_ledger_json, :degradation_level, :dry_run, :created_at, :updated_at, :published_at)""",
+                job_id, youtube_video_id, youtube_url, media_path, created_at, updated_at, published_at)
+                VALUES (:id, :status, :format, :content_type, :topic, :title, :slot, :duration_seconds,
+                :script, :fact_sheet_json, :qa_report_json, :license_ledger_json, :degradation_level,
+                :dry_run, :job_id, :youtube_video_id, :youtube_url, :media_path, :created_at, :updated_at,
+                :published_at)""",
                 video,
             )
         return self._hydrate_video(video)
@@ -529,6 +550,10 @@ class Database:
             "script",
             "degradation_level",
             "published_at",
+            "job_id",
+            "youtube_video_id",
+            "youtube_url",
+            "media_path",
             "fact_sheet",
             "qa_report",
             "license_ledger",
@@ -557,6 +582,18 @@ class Database:
     def get_video(self, video_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
+        return self._hydrate_video(self._row(row)) if row else None  # type: ignore[arg-type]
+
+    def get_video_by_job(self, job_id: str) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM videos WHERE job_id = ?", (job_id,)).fetchone()
+        return self._hydrate_video(self._row(row)) if row else None  # type: ignore[arg-type]
+
+    def get_video_by_youtube_id(self, youtube_video_id: str) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM videos WHERE youtube_video_id = ?", (youtube_video_id,)
+            ).fetchone()
         return self._hydrate_video(self._row(row)) if row else None  # type: ignore[arg-type]
 
     def list_videos(self, limit: int = 50) -> list[dict[str, Any]]:
@@ -623,6 +660,24 @@ class Database:
             item["result"] = json_loads(item.pop("result_json"))  # type: ignore[union-attr]
             result.append(item)
         return result
+
+    def update_provider_health(
+        self,
+        provider: str,
+        *,
+        status: str,
+        role: str = "external",
+        error: str | None = None,
+        latency_ms: float | None = None,
+    ) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                """INSERT INTO provider_health(provider, role, status, last_checked, error, latency_ms)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider) DO UPDATE SET role=excluded.role, status=excluded.status,
+                last_checked=excluded.last_checked, error=excluded.error, latency_ms=excluded.latency_ms""",
+                (provider, role, status, utc_now(), error, latency_ms),
+            )
 
     def provider_health(self) -> list[dict[str, Any]]:
         with self.connection() as connection:

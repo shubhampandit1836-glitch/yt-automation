@@ -5,6 +5,9 @@ import {
   getExperiments,
   getMemory,
   getOps,
+  getYoutubeAuthUrl,
+  getYoutubeChannel,
+  syncYoutubeChannel,
   getOverview,
   getRuns,
   getSeries,
@@ -143,13 +146,15 @@ function CommentsPage() {
   return <><SectionHeading eyebrow="Viewer feedback" title="Know what people want next." /><section className="panel comments-empty"><div className="comment-orbit">◍</div><h2>Comment intelligence is waiting for its adapter.</h2><p>When enabled, only high-confidence genuine feedback enters memory. Spam, toxic bait, and uncertain classifications stay out of the learning loop.</p><div className="comment-rules"><span>✓ topic requests weighted by likes</span><span>✓ corrections re-verified against sources</span><span>✓ criticism is never deleted</span></div></section></>
 }
 
-function ControlsPage({ overview, onControl, onForceRun }) {
-  return <><SectionHeading eyebrow="Emergency controls" title="You are always in control." /><div className="controls-grid"><section className="panel control-card"><span className="control-icon purple-bg">Ⅱ</span><h3>Pause automatic uploads</h3><p>Keep the channel thinking and planning, but stop new videos from being uploaded.</p><button className="button secondary" onClick={() => onControl(overview?.publishing_paused ? 'resume' : 'pause')}>{overview?.publishing_paused ? 'Resume publishing' : 'Pause publishing'}</button><small>Current: {overview?.publishing_paused ? 'paused' : 'running'}</small></section><section className="panel control-card danger-card"><span className="control-icon red-bg">■</span><h3>Stop everything</h3><p>Stop new automatic work immediately. Use this only for an emergency.</p><button className="button danger" onClick={() => onControl(overview?.kill_switch ? 'clear-kill-switch' : 'kill-switch')}>{overview?.kill_switch ? 'Clear kill switch' : 'Enable kill switch'}</button><small>Current: {overview?.kill_switch ? 'active' : 'off'}</small></section><section className="panel control-card"><span className="control-icon blue-bg">✦</span><h3>Make one video now</h3><p>Ask the channel to create one Short. It will still pass every safety check.</p><button className="button primary" onClick={onForceRun}>Create a Short</button><small>Safe default: dry-run</small></section></div><div className="control-warning"><b>Every action is recorded.</b><span>Safety rules, budgets and upload protections cannot be changed by the learning system.</span></div></>
+function ControlsPage({ overview, onControl, onForceRun, onConnect, onSync }) {
+  const connected = overview?.automation?.mode === 'autopilot'
+  return <><SectionHeading eyebrow="Autopilot setup" title="Connect once, then let it run." /><section className="panel youtube-connect-panel"><div className="connect-mark">▶</div><div className="connect-copy"><span className="eyebrow">YouTube channel</span><h3>{connected ? 'Your channel is connected' : 'Connect your real channel'}</h3><p>{connected ? 'The scheduler can now research, create, upload and sync channel metrics.' : 'Authorize your channel once. Orbit will never need this dashboard open to keep working.'}</p></div><StatusPill value={connected ? 'connected' : 'not connected'} tone={connected ? 'good' : 'warn'} /><div className="connect-actions"><button className="button primary" onClick={onConnect}>{connected ? 'Reconnect YouTube' : 'Connect YouTube'}</button><button className="button secondary" onClick={onSync}>Sync now</button></div></section><SectionHeading eyebrow="Emergency controls" title="You are always in control." /><div className="controls-grid"><section className="panel control-card"><span className="control-icon purple-bg">Ⅱ</span><h3>Pause automatic uploads</h3><p>Keep the channel thinking and planning, but stop new videos from being uploaded.</p><button className="button secondary" onClick={() => onControl(overview?.publishing_paused ? 'resume' : 'pause')}>{overview?.publishing_paused ? 'Resume publishing' : 'Pause publishing'}</button><small>Current: {overview?.publishing_paused ? 'paused' : 'running'}</small></section><section className="panel control-card danger-card"><span className="control-icon red-bg">■</span><h3>Stop everything</h3><p>Stop new automatic work immediately. Use this only for an emergency.</p><button className="button danger" onClick={() => onControl(overview?.kill_switch ? 'clear-kill-switch' : 'kill-switch')}>{overview?.kill_switch ? 'Clear kill switch' : 'Enable kill switch'}</button><small>Current: {overview?.kill_switch ? 'active' : 'off'}</small></section><section className="panel control-card"><span className="control-icon blue-bg">✦</span><h3>Make one video now</h3><p>Ask the channel to create one Short. It will still pass every safety check.</p><button className="button primary" onClick={onForceRun}>Create a Short</button><small>Safe default: dry-run</small></section></div><div className="control-warning"><b>Every action is recorded.</b><span>Safety rules, budgets and upload protections cannot be changed by the learning system.</span></div></>
 }
 
 function App() {
   const [page, setPage] = useState('overview')
   const [overview, setOverview] = useState(null)
+  const [channel, setChannel] = useState(null)
   const [videos, setVideos] = useState([])
   const [runs, setRuns] = useState([])
   const [ops, setOps] = useState(null)
@@ -164,8 +169,8 @@ function App() {
   const load = useCallback(async () => {
     setRefreshing(true)
     try {
-      const [nextOverview, nextVideos, nextRuns, nextOps, nextSeries, nextExperiments, nextMemory] = await Promise.all([getOverview(), getVideos(), getRuns(), getOps(), getSeries(), getExperiments(), getMemory()])
-      setOverview(nextOverview); setVideos(nextVideos); setRuns(nextRuns); setOps(nextOps); setSeries(nextSeries); setExperiments(nextExperiments); setMemory(nextMemory); setError('')
+      const [nextOverview, nextVideos, nextRuns, nextOps, nextSeries, nextExperiments, nextMemory, nextChannel] = await Promise.all([getOverview(), getVideos(), getRuns(), getOps(), getSeries(), getExperiments(), getMemory(), getYoutubeChannel().catch(() => null)])
+      setOverview(nextOverview); setChannel(nextChannel); setVideos(nextVideos); setRuns(nextRuns); setOps(nextOps); setSeries(nextSeries); setExperiments(nextExperiments); setMemory(nextMemory); setError('')
     } catch (loadError) { setError(loadError.message) } finally { setRefreshing(false) }
   }, [])
 
@@ -173,6 +178,13 @@ function App() {
   useEffect(() => subscribeToEvents((event) => { setEvents((current) => [...current.slice(-29), event]); load() }, () => {}), [load])
 
   const handleForceRun = async () => { try { await forceRun({ format: 'short', content_type: 'facts', reason: 'dashboard queue action' }); await load(); setPage('overview') } catch (actionError) { setError(actionError.message) } }
+  const handleConnect = async () => {
+    try {
+      const response = await getYoutubeAuthUrl()
+      window.open(response.authorization_url, '_blank', 'noopener,noreferrer')
+    } catch (actionError) { setError(actionError.message) }
+  }
+  const handleSync = async () => { try { await syncYoutubeChannel(); await load() } catch (actionError) { setError(actionError.message) } }
   const handleControl = async (name) => { try { await control(name, 'dashboard emergency control'); await load() } catch (actionError) { setError(actionError.message) } }
   const searchMemory = async () => { try { setMemory(await getMemory(memoryQuery)) } catch (actionError) { setError(actionError.message) } }
 
@@ -185,11 +197,11 @@ function App() {
     if (page === 'comments') return <CommentsPage />
     if (page === 'memory') return <MemoryPage memoryQuery={memoryQuery} setMemoryQuery={setMemoryQuery} memory={memory} searchMemory={searchMemory} />
     if (page === 'ops') return <OpsPage ops={ops} />
-    return <ControlsPage overview={overview} onControl={handleControl} onForceRun={handleForceRun} />
+    return <ControlsPage overview={overview} onControl={handleControl} onForceRun={handleForceRun} onConnect={handleConnect} onSync={handleSync} />
   }, [page, overview, runs, videos, events, series, experiments, memory, memoryQuery, ops])
 
   return <div className="app-shell">
-    <aside className="sidebar"><div className="brand"><div className="brand-mark">◈</div><div><b>orbit</b><span>YT AUTOMATION</span></div></div><div className="workspace-switch"><span className="workspace-avatar">A</span><div><b>Alpha channel</b><small>Owner workspace</small></div><span className="workspace-chevron">⌄</span></div><nav>{nav.map((item) => <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)}><span className="nav-icon">{item.icon}</span>{item.label}{item.id === 'ops' && <i className="nav-alert" />}</button>)}</nav><div className="sidebar-bottom"><button className={page === 'controls' ? 'active' : ''} onClick={() => setPage('controls')}><span className="nav-icon">⚙</span>Autopilot</button><div className="connection"><i /><span><b>Backend connected</b><small>{refreshing ? 'Syncing now…' : 'Synced just now'}</small></span></div><div className="sidebar-version">ORBIT 0.1.0 <span>·</span> {overview?.automation?.mode === 'autopilot' ? 'AUTOPILOT' : 'PREVIEW'}</div></div></aside>
+    <aside className="sidebar"><div className="brand"><div className="brand-mark">◈</div><div><b>orbit</b><span>YT AUTOMATION</span></div></div><div className="workspace-switch"><span className="workspace-avatar">{(channel?.snippet?.title || 'A').slice(0, 1).toUpperCase()}</span><div><b>{channel?.snippet?.title || 'Preview workspace'}</b><small>{channel ? 'YouTube channel' : 'Connect your channel'}</small></div><span className="workspace-chevron">⌄</span></div><nav>{nav.map((item) => <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)}><span className="nav-icon">{item.icon}</span>{item.label}{item.id === 'ops' && <i className="nav-alert" />}</button>)}</nav><div className="sidebar-bottom"><button className={page === 'controls' ? 'active' : ''} onClick={() => setPage('controls')}><span className="nav-icon">⚙</span>Autopilot</button><div className="connection"><i /><span><b>Backend connected</b><small>{refreshing ? 'Syncing now…' : 'Synced just now'}</small></span></div><div className="sidebar-version">ORBIT 0.1.0 <span>·</span> {overview?.automation?.mode === 'autopilot' ? 'AUTOPILOT' : 'PREVIEW'}</div></div></aside>
     <main className="main-content"><header className="topbar"><div className="mobile-brand"><span>◈</span> orbit</div><div className="breadcrumbs"><span>Workspace</span><b>›</b><strong>{nav.find((item) => item.id === page)?.label || 'Controls'}</strong></div><div className="top-actions"><span className="top-status"><i /> {overview?.automation?.mode === 'autopilot' ? 'autopilot is on' : 'preview mode'}</span><button className="icon-button" onClick={load} aria-label="Refresh">↻</button><button className="avatar-button">A</button></div></header><div className="page-content">{error && <div className="error-banner"><b>Connection issue</b><span>{error}</span><button onClick={() => setError('')}>×</button></div>}{content}</div></main>
   </div>
 }

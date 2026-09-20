@@ -14,7 +14,10 @@ from ..db import Database
 from ..events import EventBus
 from ..graphs.pipeline import PipelineRunner
 from ..services.governor import ResourceGovernor
+from ..services.media import RenderService
 from ..services.providers import ProviderRouter
+from ..services.research import ResearchService
+from ..services.youtube import YouTubeNotConfigured, YouTubeService
 
 
 class Worker:
@@ -24,8 +27,23 @@ class Worker:
         self.database = database or Database(settings.database_path)
         self.events = EventBus(self.database)
         self.governor = ResourceGovernor(self.database)
-        self.router = ProviderRouter(self.governor, dry_run=settings.dry_run)
-        self.pipeline = PipelineRunner(self.database, self.events, self.router)
+        self.router = ProviderRouter(
+            self.governor,
+            dry_run=settings.dry_run,
+            gemini_api_key=settings.gemini_api_key,
+            gemini_model=settings.gemini_model,
+        )
+        self.youtube = YouTubeService(self.database, settings)
+        self.researcher = ResearchService(self.router, settings.rss_url_list, self.youtube)
+        self.renderer = RenderService(settings.media_dir, settings.tts_voice)
+        self.pipeline = PipelineRunner(
+            self.database,
+            self.events,
+            self.router,
+            researcher=self.researcher,
+            renderer=self.renderer,
+            youtube=self.youtube,
+        )
 
     def run_auxiliary(self, job: dict) -> None:
         """Run a cheap control-plane job without entering the media graph.
@@ -42,10 +60,16 @@ class Worker:
         run = self.database.create_run(job["type"], job["id"], state)
         self.database.update_run(run["id"], status="running", node=payload.get("kind", job["type"]), state=state)
         self.events.publish(run["id"], "run.started", f"{job['type'].title()} cycle started", payload=payload)
-        # Provider-backed implementations attach to this seam. In safe local
-        # mode, a completed no-op is more honest than pretending to have read
-        # YouTube Analytics or comments.
-        state["result"] = "adapter not configured; no external request made"
+        if job["type"] == "monitor" and payload.get("kind") == "youtube-sync":
+            if self.settings.dry_run:
+                state["result"] = "dry-run: YouTube sync skipped"
+            else:
+                state["result"] = self.youtube.sync_channel()
+        else:
+            # Provider-backed implementations attach to this seam. In safe
+            # local mode, a completed no-op is more honest than pretending to
+            # have read YouTube Analytics or comments.
+            state["result"] = "adapter not configured; no external request made"
         self.database.update_run(run["id"], status="succeeded", node=payload.get("kind", job["type"]), state=state)
         self.events.publish(run["id"], "run.completed", f"{job['type'].title()} cycle recorded in local mode", payload=state)
 

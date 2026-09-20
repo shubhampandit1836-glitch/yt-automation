@@ -25,6 +25,8 @@ def test_health_and_safe_overview() -> None:
     overview = client.get("/api/v1/overview").json()
     assert overview["kill_switch"] is False
     assert overview["queue"]["queued"] == 0
+    assert overview["automation"]["mode"] == "preview"
+    assert client.get("/api/v1/auth/youtube/status").json()["connected"] is False
 
 
 def test_force_run_only_enqueues_and_controls_are_audited() -> None:

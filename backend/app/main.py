@@ -21,7 +21,12 @@ def create_app(database: Database | None = None, settings: Settings | None = Non
     db = database or Database(config.database_path)
     bus = EventBus(db)
     governor = ResourceGovernor(db)
-    router = ProviderRouter(governor, dry_run=config.dry_run)
+    router = ProviderRouter(
+        governor,
+        dry_run=config.dry_run,
+        gemini_api_key=config.gemini_api_key,
+        gemini_model=config.gemini_model,
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):

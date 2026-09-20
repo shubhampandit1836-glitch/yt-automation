@@ -76,6 +76,10 @@ class VideoResponse(BaseModel):
     created_at: str
     updated_at: str
     published_at: str | None = None
+    job_id: str | None = None
+    youtube_video_id: str | None = None
+    youtube_url: str | None = None
+    media_path: str | None = None
     metrics: list[dict[str, Any]] = Field(default_factory=list)
 
 

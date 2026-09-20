@@ -61,6 +61,13 @@ class AutonomousScheduler:
             coalesce=True,
             max_instances=1,
         )
+        self.scheduler.add_job(
+            lambda: self.enqueue("monitor", {"kind": "youtube-sync"}, priority=25),
+            IntervalTrigger(hours=1),
+            id="youtube-sync",
+            coalesce=True,
+            max_instances=1,
+        )
         # Planning only creates a production job. The worker owns the graph.
         self.scheduler.add_job(
             lambda: self.enqueue(
