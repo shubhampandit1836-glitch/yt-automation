@@ -99,6 +99,12 @@ class MetricResponse(BaseModel):
     source: str
 
 
+class SeriesCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    promise: str = Field(min_length=5, max_length=240)
+    format: Literal["short", "long"] = "short"
+
+
 class ControlRequest(BaseModel):
     actor: str = "dashboard-owner"
     reason: str = Field(default="dashboard control", min_length=1, max_length=300)

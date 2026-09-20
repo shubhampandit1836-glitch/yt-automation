@@ -23,6 +23,7 @@ from .schemas import (
     JobCreate,
     JobResponse,
     RunResponse,
+    SeriesCreate,
     VideoResponse,
 )
 from .services.assets import AssetService
@@ -196,6 +197,12 @@ def build_router(database: Database, events: EventBus, governor: ResourceGoverno
     @router.get("/series")
     def series() -> list[dict[str, Any]]:
         return database.list_series()
+
+    @router.post("/series", status_code=status.HTTP_201_CREATED)
+    def create_series(payload: SeriesCreate, _: str = Depends(owner_guard)) -> dict[str, Any]:
+        result = database.create_series(payload.name, payload.promise, payload.format)
+        database.record_audit("dashboard-owner", "series.created", result["id"], payload.model_dump())
+        return result
 
     @router.get("/experiments")
     def experiments() -> list[dict[str, Any]]:

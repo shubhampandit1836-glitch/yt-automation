@@ -708,6 +708,17 @@ class Database:
                 ).fetchall()
         return [self._row(row) for row in rows]  # type: ignore[misc]
 
+    def create_series(self, name: str, promise: str, format_name: str) -> dict[str, Any]:
+        series_id = str(uuid.uuid4())
+        now = utc_now()
+        bible = {"format": format_name, "promise": promise, "episode_count": 0, "recurring_graphics": []}
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT INTO series(id, name, state, bible_json, created_at, updated_at) VALUES (?, ?, 'pilot', ?, ?, ?)",
+                (series_id, name, json_dumps(bible), now, now),
+            )
+        return {"id": series_id, "name": name, "state": "pilot", "bible": bible, "created_at": now, "updated_at": now}
+
     def list_series(self) -> list[dict[str, Any]]:
         with self.connection() as connection:
             rows = connection.execute("SELECT * FROM series ORDER BY updated_at DESC").fetchall()
