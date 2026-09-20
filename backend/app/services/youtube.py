@@ -229,4 +229,18 @@ class YouTubeService:
         while response is None:
             _, response = request.next_chunk()
         video_id = response["id"]
+        # Upload completion is not processing completion. Poll before marking
+        # the job successful so a retry cannot hide a rejected media file.
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
+            processed = api.videos().list(part="status,processingDetails", id=video_id).execute()
+            item = (processed.get("items") or [{}])[0]
+            processing = item.get("processingDetails", {}).get("processingStatus")
+            if processing in {None, "succeeded"}:
+                break
+            if processing in {"failed", "terminated"}:
+                raise RuntimeError(f"YouTube processing failed for uploaded video {video_id}")
+            time.sleep(5)
+        else:
+            raise RuntimeError(f"YouTube processing timed out for uploaded video {video_id}")
         return {"id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}", "published_at": publish_at}
