@@ -47,6 +47,8 @@ class PipelineState(TypedDict, total=False):
     dry_run: bool
     media_path: str
     duration_seconds: float
+    render_report: dict[str, Any]
+    render_manifest: dict[str, Any]
     publish_at: str
     youtube_url: str
     error: str
@@ -153,7 +155,8 @@ Write a fresh Roman Hinglish {fmt} gaming video script for this topic: {state['t
 Use only these verified facts: {state.get('facts', [])}
 Open with a strong 1-second hook. Use short natural sentences, friendly Indian gaming energy,
 and no impersonation, abuse, unsupported claims, or copied article wording. End with a simple question.
-Return only the spoken script, under 130 words for a Short or under 900 words for long-form.
+For a Short, target 35 to 120 words and one clear payoff. For long-form, target 500 to 850 words,
+with an intro, three clearly separated proof beats, a recap, and an outro. Return only the spoken script.
 """
             generated = self.router.generate(prompt, role="reasoning", purpose="script-writing")
             script = generated["text"].strip()
@@ -166,22 +169,35 @@ Return only the spoken script, under 130 words for a Short or under 900 words fo
             script = " ".join([opening, body, close])
         state["title"] = f"{state['topic']} — myth ya fact?"
         state["script"] = script
-        state["storyboard"] = [
-            {"scene": 1, "intent": "hook", "visual": "mascot reaction", "duration": 2.5},
-            {"scene": 2, "intent": "proof", "visual": "source card", "duration": 8},
-            {"scene": 3, "intent": "loop", "visual": "verdict stamp", "duration": 3},
-        ]
+        state["storyboard"] = (
+            [
+                {"scene": 1, "intent": "hook", "visual": "original gaming motion card", "duration": 4},
+                {"scene": 2, "intent": "context", "visual": "timeline and source card", "duration": 12},
+                {"scene": 3, "intent": "proof", "visual": "three evidence cards", "duration": 20},
+                {"scene": 4, "intent": "counterpoint", "visual": "versus split screen", "duration": 16},
+                {"scene": 5, "intent": "recap", "visual": "verdict scoreboard", "duration": 12},
+                {"scene": 6, "intent": "outro", "visual": "question and subscribe card", "duration": 6},
+            ] if fmt == "long" else [
+                {"scene": 1, "intent": "hook", "visual": "original gaming motion card", "duration": 2.5},
+                {"scene": 2, "intent": "proof", "visual": "source card", "duration": 8},
+                {"scene": 3, "intent": "loop", "visual": "verdict stamp", "duration": 3},
+            ]
+        )
         state["assets"] = [{"type": "original_graphic", "license": "generated/local fixture"}]
         if not state.get("dry_run") and self.assets:
             try:
-                stock = self.assets.search(state["topic"], limit=3)
-                if stock:
-                    downloaded = self.assets.download(
-                        stock[0], self.assets.directory / state["video_id"] / "background.jpg"
-                    )
-                    state["assets"] = [downloaded]
-            except Exception as exc:  # noqa: BLE001 - stock is optional, original graphics remain safe
-                self._emit(state, "asset.warning", "Stock search unavailable; using original graphics", {"error": str(exc)})
+                licensed_gameplay = self.assets.licensed_gameplay(limit=1)
+                if licensed_gameplay:
+                    state["assets"] = licensed_gameplay
+                else:
+                    stock = self.assets.search(state["topic"], limit=3)
+                    if stock:
+                        downloaded = self.assets.download(
+                            stock[0], self.assets.directory / state["video_id"] / "background.jpg"
+                        )
+                        state["assets"] = [downloaded]
+            except Exception as exc:  # noqa: BLE001 - optional visuals never bypass original graphics
+                self._emit(state, "asset.warning", "Visual asset search unavailable; using original graphics", {"error": str(exc)})
         if self.thumbnails:
             variants = self.thumbnails.create_variants(video_id=state["video_id"], title=state["title"], topic=state["topic"])
             state["thumbnail_variants"] = variants
@@ -191,7 +207,7 @@ Return only the spoken script, under 130 words for a Short or under 900 words fo
             title=state["title"],
             script=script,
             status="rendering",
-            duration_seconds=14,
+            duration_seconds=(60 if fmt == "long" else 14),
             thumbnail_variants=state.get("thumbnail_variants", []),
             selected_thumbnail=state.get("selected_thumbnail"),
         )
@@ -204,11 +220,24 @@ Return only the spoken script, under 130 words for a Short or under 900 words fo
             if not self.renderer:
                 raise RuntimeError("A TTS and FFmpeg renderer is required when DRY_RUN=false")
             background = next((item.get("local_path") for item in state.get("assets", []) if item.get("local_path")), None)
-            rendered = self.renderer.render_short(video_id=state["video_id"], script=state["script"], background_path=background)
+            rendered = self.renderer.render(
+                video_id=state["video_id"],
+                script=state["script"],
+                title=state.get("title", state["topic"]),
+                topic=state["topic"],
+                format_name=state.get("format", "short"),
+                storyboard=state.get("storyboard"),
+                background_path=background,
+            )
             state["media_path"] = rendered["path"]
             state["duration_seconds"] = rendered["duration_seconds"]
-            self.database.update_video(state["video_id"], media_path=rendered["path"], duration_seconds=rendered["duration_seconds"])
-            message = "TTS voice, subtitles and a 9:16 MP4 were rendered"
+            state["render_report"] = self.renderer.inspect(rendered["path"])
+            state["render_manifest"] = rendered["edit_manifest"]
+            self.database.update_video(
+                state["video_id"], media_path=rendered["path"], duration_seconds=rendered["duration_seconds"],
+                render_manifest=rendered["edit_manifest"],
+            )
+            message = f"Original motion graphics, TTS, captions, music bed and {state.get('format', 'short')} edit rendered"
         else:
             message = "Deterministic render plan prepared; media adapter is dry-run"
         self.database.update_video(
@@ -224,6 +253,12 @@ Return only the spoken script, under 130 words for a Short or under 900 words fo
         self._enter("qa", state)
         verified = all(item.get("verified") for item in state.get("facts", []))
         has_media = bool(state.get("media_path"))
+        format_name = state.get("format", "short")
+        render_report = state.get("render_report", {})
+        expected_size = (1080, 1920) if format_name == "short" else (1920, 1080)
+        correct_size = (render_report.get("width"), render_report.get("height")) == expected_size
+        correct_duration = (8 <= float(render_report.get("duration_seconds", 0)) < 60) if format_name == "short" else (60 <= float(render_report.get("duration_seconds", 0)) <= 600)
+        has_audio = bool(render_report.get("has_audio", True))
         youtube_ready = False
         if not self.router.dry_run and self.youtube:
             youtube_ready = self.youtube.status().get("connected", False)
@@ -232,10 +267,16 @@ Return only the spoken script, under 130 words for a Short or under 900 words fo
             blocking.append("research did not produce two-source verified claims")
         if not has_media:
             blocking.append("render did not produce a media file")
+        if not self.router.dry_run and not correct_size:
+            blocking.append(f"rendered output is not {expected_size[0]}x{expected_size[1]}")
+        if not self.router.dry_run and not correct_duration:
+            blocking.append("rendered duration is outside the format contract")
+        if not self.router.dry_run and not has_audio:
+            blocking.append("rendered output has no audio stream")
         if not youtube_ready and not self.router.dry_run:
             blocking.append("YouTube OAuth is not connected")
         report = {
-            "technical": {"passed": has_media or self.router.dry_run, "checks": ["composition", "duration", "audio"]},
+            "technical": {"passed": (has_media and correct_size and correct_duration and has_audio) or self.router.dry_run, "checks": ["composition", "duration", "audio", "aspect_ratio"], "render": render_report},
             "factual": {"passed": verified, "checks": ["claim-to-source mapping"]},
             "copyright": {"passed": True, "checks": ["license ledger present"]},
             "originality": {"passed": True, "checks": ["own-script similarity gate"]},
@@ -258,6 +299,12 @@ Return only the spoken script, under 130 words for a Short or under 900 words fo
 
     def publish(self, state: PipelineState) -> dict[str, Any]:
         self._enter("publish", state)
+        existing = self.database.get_video(state["video_id"])
+        if existing and existing.get("youtube_video_id") and existing.get("youtube_url"):
+            state["youtube_url"] = existing["youtube_url"]
+            state["status"] = existing.get("status", "scheduled")
+            self._leave("publish", state, "Existing YouTube upload reused; retry did not create a duplicate")
+            return state
         report = state.get("qa_report", {})
         if not report.get("publishable"):
             state["status"] = "blocked"

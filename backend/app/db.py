@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS videos (
     media_path TEXT,
     thumbnail_variants_json TEXT NOT NULL DEFAULT '[]',
     selected_thumbnail TEXT,
+    render_manifest_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     published_at TEXT
@@ -248,6 +249,7 @@ class Database:
                 "media_path": "ALTER TABLE videos ADD COLUMN media_path TEXT",
                 "thumbnail_variants_json": "ALTER TABLE videos ADD COLUMN thumbnail_variants_json TEXT NOT NULL DEFAULT '[]'",
                 "selected_thumbnail": "ALTER TABLE videos ADD COLUMN selected_thumbnail TEXT",
+                "render_manifest_json": "ALTER TABLE videos ADD COLUMN render_manifest_json TEXT NOT NULL DEFAULT '{}'",
             }
             for column, statement in migrations.items():
                 if column not in existing:
@@ -553,6 +555,7 @@ class Database:
             "media_path": payload.get("media_path"),
             "thumbnail_variants_json": json_dumps(payload.get("thumbnail_variants", [])),
             "selected_thumbnail": payload.get("selected_thumbnail"),
+            "render_manifest_json": json_dumps(payload.get("render_manifest", {})),
             "created_at": now,
             "updated_at": now,
             "published_at": payload.get("published_at"),
@@ -562,11 +565,11 @@ class Database:
                 """INSERT INTO videos(id, status, format, content_type, topic, title, slot, duration_seconds,
                 script, fact_sheet_json, qa_report_json, license_ledger_json, degradation_level, dry_run,
                 job_id, youtube_video_id, youtube_url, media_path, thumbnail_variants_json, selected_thumbnail,
-                created_at, updated_at, published_at)
+                render_manifest_json, created_at, updated_at, published_at)
                 VALUES (:id, :status, :format, :content_type, :topic, :title, :slot, :duration_seconds,
                 :script, :fact_sheet_json, :qa_report_json, :license_ledger_json, :degradation_level,
                 :dry_run, :job_id, :youtube_video_id, :youtube_url, :media_path, :thumbnail_variants_json,
-                :selected_thumbnail, :created_at, :updated_at, :published_at)""",
+                :selected_thumbnail, :render_manifest_json, :created_at, :updated_at, :published_at)""",
                 video,
             )
         return self._hydrate_video(video)
@@ -579,6 +582,7 @@ class Database:
             ("qa_report_json", "qa_report"),
             ("license_ledger_json", "license_ledger"),
             ("thumbnail_variants_json", "thumbnail_variants"),
+            ("render_manifest_json", "render_manifest"),
         ):
             if key in item:
                 item[target] = json_loads(item.pop(key), [] if "ledger" in target or "sheet" in target or "thumbnail" in target else {})
@@ -600,6 +604,7 @@ class Database:
             "media_path",
             "thumbnail_variants",
             "selected_thumbnail",
+            "render_manifest",
             "fact_sheet",
             "qa_report",
             "license_ledger",
@@ -614,6 +619,7 @@ class Database:
                 "qa_report": "qa_report_json",
                 "license_ledger": "license_ledger_json",
                 "thumbnail_variants": "thumbnail_variants_json",
+                "render_manifest": "render_manifest_json",
             }.get(key, key)
             assignments.append(f"{db_key} = ?")
             values.append(json_dumps(value) if db_key.endswith("_json") else value)
@@ -685,6 +691,18 @@ class Database:
             "source": values.get("source", "mock"),
         }
         with self.connection() as connection:
+            existing = connection.execute(
+                "SELECT * FROM metrics WHERE video_id IS ? AND captured_at = ? AND source = ? LIMIT 1",
+                (video_id, data["captured_at"], data["source"]),
+            ).fetchone()
+            if existing:
+                connection.execute(
+                    """UPDATE metrics SET age_hours=?, views=?, watch_time_minutes=?, average_view_percentage=?,
+                    ctr=?, likes=?, comments=? WHERE id=?""",
+                    (data["age_hours"], data["views"], data["watch_time_minutes"], data["average_view_percentage"], data["ctr"], data["likes"], data["comments"], existing["id"]),
+                )
+                data["id"] = existing["id"]
+                return data
             cursor = connection.execute(
                 """INSERT INTO metrics(video_id, captured_at, age_hours, views, watch_time_minutes,
                 average_view_percentage, ctr, likes, comments, source)

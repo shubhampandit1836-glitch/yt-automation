@@ -1,8 +1,9 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
 async function request(path, options = {}) {
+  const ownerEmail = import.meta.env.VITE_OWNER_EMAIL
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: { 'Content-Type': 'application/json', ...(ownerEmail ? { 'X-Owner-Email': ownerEmail } : {}), ...(options.headers || {}) },
     ...options,
   })
   if (!response.ok) {
@@ -13,6 +14,8 @@ async function request(path, options = {}) {
 }
 
 export const getHealth = () => request('/health')
+export const getReadiness = () => request('/automation/readiness')
+export const mediaUrl = (id) => `${API_BASE}/videos/${encodeURIComponent(id)}/media`
 export const getOverview = () => request('/overview')
 export const getVideos = () => request('/videos?limit=50')
 export const getVideo = (id) => request(`/videos/${id}`)

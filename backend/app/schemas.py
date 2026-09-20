@@ -82,6 +82,7 @@ class VideoResponse(BaseModel):
     media_path: str | None = None
     thumbnail_variants: list[str] = Field(default_factory=list)
     selected_thumbnail: str | None = None
+    render_manifest: dict[str, Any] = Field(default_factory=dict)
     metrics: list[dict[str, Any]] = Field(default_factory=list)
 
 

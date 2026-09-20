@@ -21,10 +21,15 @@ class LearningService:
             if not metrics:
                 continue
             latest = metrics[0]
-            retention = float(latest.get("average_view_percentage") or 0) / 100
-            discovery = min(1.0, float(latest.get("views") or 0) / 1000)
-            ctr = float(latest.get("ctr") or 0) / 100
-            reward = round(0.35 * retention + 0.25 * discovery + 0.15 * ctr, 4)
+            age_hours = float(latest.get("age_hours") or 0)
+            # Respect YouTube lag: views are an early signal, likes/comments
+            # become usable after a day, and retention/CTR only enter the
+            # playbook after a stable 48–72 hour window.
+            retention = float(latest.get("average_view_percentage") or 0) / 100 if age_hours >= 48 else 0.0
+            discovery = min(1.0, float(latest.get("views") or 0) / 1000) if age_hours >= 6 else 0.0
+            ctr = float(latest.get("ctr") or 0) / 100 if age_hours >= 72 else 0.0
+            engagement = min(1.0, (float(latest.get("likes") or 0) + float(latest.get("comments") or 0)) / 100) if age_hours >= 24 else 0.0
+            reward = round(0.35 * retention + 0.25 * discovery + 0.15 * ctr + 0.10 * engagement, 4)
             rewards.append(reward)
         summary = {
             "videos_reviewed": len(videos),

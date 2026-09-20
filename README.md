@@ -15,13 +15,16 @@ A safe-by-default control plane for the autonomous Hinglish gaming channel descr
 - an APScheduler entry point that only enqueues work;
 - a resource governor with provider roles, reservations and persisted quota;
 - YouTube OAuth authorization, channel identity, recent-upload sync, Analytics snapshots and resumable scheduled upload;
-- Gemini grounded RSS research, Roman-Hinglish script generation, Edge TTS and deterministic FFmpeg Shorts rendering;
+- Gemini grounded RSS research, Roman-Hinglish script generation, Edge TTS and a deterministic FFmpeg professional editor;
+- automatic Shorts and long-form composition: strict 9:16 under 60 seconds or 16:9 from 1–10 minutes, captions, scene cards, fades, original music bed, voice mix, and edit manifests;
+- optional owner-declared licensed gameplay clips, with default-deny file selection and license/source records;
+- scheduled daily Shorts and weekly long-form production jobs;
 - a safe pipeline graph that blocks unverified local fixture claims at QA;
 - SSE event stream for live dashboard updates;
 - owner control endpoints for pause, resume, kill switch and force-run;
 - responsive dark monitoring UI with Overview, Videos, Performance, Series, Experiments, Comments, Memory, Ops and Controls pages.
 
-YouTube OAuth/channel sync, Gemini structured research, Edge TTS and an FFmpeg renderer are wired behind explicit adapters. Postgres/pgvector, Analytics deep snapshots, Telegram/heartbeat and Whisper alignment remain staged integrations. Each adapter must pass its QA contract before changing `DRY_RUN=false`.
+YouTube OAuth/channel sync, Gemini structured research, Edge TTS and the FFmpeg editor are wired behind explicit adapters. Analytics rows are persisted with lag metadata, and the learning service refuses to use immature CTR/retention signals. The remaining production work is operational rather than a hidden approval step: configure and validate the free-tier accounts, install FFmpeg on the host, complete the YouTube OAuth/API compliance review, configure an external heartbeat and owner alerts, then run a private staging upload before changing `DRY_RUN=false`. Each adapter must pass the readiness endpoint and QA contract first.
 
 ## Quick start
 
@@ -80,7 +83,9 @@ docker compose up --build
 | Route | Purpose |
 | --- | --- |
 | `GET /api/v1/overview` | slate, queue, views, health and quota summary |
-| `GET /api/v1/videos` | video ledger with fact sheet, QA and license fields |
+| `GET /api/v1/videos` | video ledger with fact sheet, QA, license and edit-manifest fields |
+| `GET /api/v1/videos/{id}/media` | owner-protected download of a rendered MP4 |
+| `GET /api/v1/automation/readiness` | required free-tier adapter and go-live checks |
 | `GET /api/v1/runs` | graph status and current node |
 | `GET /api/v1/events/stream` | live SSE event stream |
 | `GET /api/v1/ops` | provider, queue and audit state |
@@ -117,11 +122,11 @@ frontend/src/
   styles.css            responsive dark UI
 ```
 
-## Next implementation seams
+## Remaining production hardening
 
-- Postgres migrations, advisory lock and native pgvector storage;
-- richer image/music/gameplay asset workers and thumbnail vision scoring;
+- Postgres migrations, advisory lock and native pgvector storage for a multi-process VM deployment;
 - policy-notice email parsing and deeper auto-pause rules;
-- Reporting API bulk exports and more statistical bandit guardrails.
+- YouTube Reporting API bulk exports and more statistical bandit guardrails;
+- real staging-channel validation of resumable upload retry recovery and provider quota exhaustion.
 
-Those integrations should each land behind the existing interfaces and add an acceptance test before being enabled in production.
+The automatic editor and scheduler are already in the worker path. These hardening items should each land behind the existing interfaces and add an acceptance test before being enabled in production.

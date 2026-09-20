@@ -90,7 +90,18 @@ class AutonomousScheduler:
                 priority=20,
             ),
             CronTrigger(hour=0, minute=30),
-            id="daily-planning",
+            id="daily-short-production",
+            coalesce=True,
+            max_instances=1,
+        )
+        self.scheduler.add_job(
+            lambda: self.enqueue(
+                "production",
+                {"format": "long", "content_type": "facts", "topic": ""},
+                priority=25,
+            ),
+            CronTrigger(day_of_week="sun", hour=12, minute=30),
+            id="weekly-long-production",
             coalesce=True,
             max_instances=1,
         )

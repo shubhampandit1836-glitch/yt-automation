@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     database_path: str = "./data/yt_automation.db"
     media_dir: str = "./data/media"
     asset_dir: str = "./data/assets"
+    gameplay_dir: str = "./data/gameplay"
+    gameplay_manifest: str = "./data/gameplay/license-manifest.json"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     cors_origins: Annotated[list[str], BeforeValidator(_split_origins)] = Field(

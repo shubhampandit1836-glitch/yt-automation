@@ -41,6 +41,23 @@ def test_force_run_only_enqueues_and_controls_are_audited() -> None:
     assert database.list_audit(limit=1)[0]["action"] == "publishing.paused"
 
 
+def test_readiness_exposes_every_required_activation_gate() -> None:
+    client, _ = make_app()
+    response = client.get("/api/v1/automation/readiness")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ready"] is False
+    assert {item["key"] for item in body["checks"]} >= {"dry_run_disabled", "gemini", "youtube_oauth", "ffmpeg", "tts", "heartbeat"}
+
+
+def test_metric_snapshots_are_idempotent() -> None:
+    _, database = make_app()
+    first = database.add_metric(None, {"captured_at": "2026-01-01T00:00:00+00:00", "views": 10, "source": "test"})
+    second = database.add_metric(None, {"captured_at": "2026-01-01T00:00:00+00:00", "views": 22, "source": "test"})
+    assert first["id"] == second["id"]
+    assert database.list_metrics()[0]["views"] == 22
+
+
 def test_pipeline_fails_closed_when_local_facts_are_unverified() -> None:
     database = Database(":memory:")
     job = database.create_job("production", {"topic": "No hallucinations", "format": "short"})

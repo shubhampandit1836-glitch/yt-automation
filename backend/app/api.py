@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
+import shutil
 from html import escape
+from pathlib import Path
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from .config import Settings
 from .db import Database, utc_now
@@ -36,7 +39,7 @@ def build_router(database: Database, events: EventBus, governor: ResourceGoverno
     router = APIRouter(prefix="/api/v1")
     youtube = YouTubeService(database, settings)
     memory = MemoryService(database, settings.gemini_api_key, settings.gemini_embedding_model)
-    assets = AssetService(settings.asset_dir, settings.pexels_api_key, settings.pixabay_api_key)
+    assets = AssetService(settings.asset_dir, settings.pexels_api_key, settings.pixabay_api_key, settings.gameplay_dir, settings.gameplay_manifest)
 
     def owner_guard(x_owner_email: str | None = Header(default=None)) -> str:
         # Production deployments must put Google/Cloudflare Access in front of
@@ -57,6 +60,25 @@ def build_router(database: Database, events: EventBus, governor: ResourceGoverno
             dry_run=settings.dry_run,
             timestamp=datetime.now(UTC),
         )
+
+    def automation_readiness() -> dict[str, Any]:
+        youtube_status = youtube.status()
+        checks = [
+            {"key": "dry_run_disabled", "label": "DRY_RUN=false", "passed": not settings.dry_run, "required": True},
+            {"key": "gemini", "label": "Grounded research and script provider", "passed": bool(settings.gemini_api_key), "required": True},
+            {"key": "youtube_oauth", "label": "YouTube OAuth and channel", "passed": bool(youtube_status.get("connected")), "required": True, "detail": youtube_status.get("message")},
+            {"key": "ffmpeg", "label": "FFmpeg professional editor", "passed": bool(shutil.which("ffmpeg")) and bool(shutil.which("ffprobe")), "required": True},
+            {"key": "tts", "label": "Free Hinglish TTS adapter", "passed": importlib.util.find_spec("edge_tts") is not None, "required": True},
+            {"key": "heartbeat", "label": "External dead-man heartbeat", "passed": bool(settings.heartbeat_url), "required": True},
+            {"key": "alerts", "label": "Owner alert channel", "passed": bool(settings.telegram_bot_token and settings.telegram_chat_id), "required": False},
+            {"key": "alignment", "label": "Word-level caption alignment", "passed": bool(settings.groq_api_key), "required": False, "detail": "Deterministic timing fallback is available"},
+        ]
+        required_passed = all(item["passed"] for item in checks if item["required"])
+        return {"ready": required_passed, "checks": checks, "mode": "autopilot" if required_passed else ("preview" if settings.dry_run else "setup")}
+
+    @router.get("/automation/readiness")
+    def readiness() -> dict[str, Any]:
+        return automation_readiness()
 
     @router.get("/auth/youtube/status")
     def youtube_auth_status() -> dict[str, Any]:
@@ -103,22 +125,19 @@ def build_router(database: Database, events: EventBus, governor: ResourceGoverno
 
     @router.get("/overview")
     def overview() -> dict[str, Any]:
-        youtube_status = youtube.status()
+        readiness = automation_readiness()
         data = database.overview()
-        ready = bool(not settings.dry_run and youtube_status.get("connected"))
+        ready = readiness["ready"]
         data["automation"] = {
-            "mode": "autopilot" if ready else ("setup" if not settings.dry_run else "preview"),
+            "mode": readiness["mode"],
             "ready": ready,
             "message": (
                 "The worker and scheduler can run without the dashboard."
                 if ready
-                else "Preview only: connect verified research, rendering and YouTube upload adapters before publishing."
+                else "Setup is incomplete: production remains blocked until every required adapter passes readiness."
             ),
-            "setup_needed": [
-                "verified research provider",
-                "render and TTS provider",
-                "YouTube OAuth and quota audit",
-            ] if not ready else [],
+            "setup_needed": [item["label"] for item in readiness["checks"] if item["required"] and not item["passed"]],
+            "readiness": readiness,
         }
         data["governor"] = governor.snapshot()
         return data
@@ -189,6 +208,18 @@ def build_router(database: Database, events: EventBus, governor: ResourceGoverno
             raise HTTPException(status_code=404, detail="video not found")
         value["metrics"] = database.list_metrics(video_id)
         return value
+
+    @router.get("/videos/{video_id}/media")
+    def video_media(video_id: str, _: str = Depends(owner_guard)) -> FileResponse:
+        value = database.get_video(video_id)
+        if not value or not value.get("media_path"):
+            raise HTTPException(status_code=404, detail="rendered media not found")
+        media_root = Path(settings.media_dir).resolve()
+        media_path = Path(value["media_path"]).resolve()
+        if not media_path.is_relative_to(media_root) or not media_path.is_file():
+            raise HTTPException(status_code=404, detail="rendered media not found")
+        safe_name = "".join(character for character in (value.get("title") or "orbit-video") if character.isalnum() or character in "-_ ").strip()[:80] or "orbit-video"
+        return FileResponse(media_path, media_type="video/mp4", filename=f"{safe_name}.mp4")
 
     @router.get("/metrics")
     def metrics(video_id: str | None = None, limit: int = Query(default=100, ge=1, le=500)) -> list[dict[str, Any]]:

@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import argparse
 import time
+from datetime import UTC, datetime
 
 from ..config import get_settings
-from ..db import Database
+from ..db import Database, utc_now
 from ..events import EventBus
 from ..graphs.pipeline import PipelineRunner
 from ..services.alerts import AlertService
@@ -41,7 +42,7 @@ class Worker:
         self.youtube = YouTubeService(self.database, settings)
         self.researcher = ResearchService(self.router, settings.rss_url_list, self.youtube)
         self.renderer = RenderService(settings.media_dir, settings.tts_voice, settings.groq_api_key)
-        self.assets = AssetService(settings.asset_dir, settings.pexels_api_key, settings.pixabay_api_key)
+        self.assets = AssetService(settings.asset_dir, settings.pexels_api_key, settings.pixabay_api_key, settings.gameplay_dir, settings.gameplay_manifest)
         self.thumbnails = ThumbnailService(settings.asset_dir)
         self.memory = MemoryService(self.database, settings.gemini_api_key, settings.gemini_embedding_model)
         self.comments = CommentService(
@@ -65,6 +66,33 @@ class Worker:
             memory=self.memory,
         )
 
+    def _store_analytics(self, report: dict) -> dict:
+        headers = [str(item.get("name", "")).lower() for item in report.get("columnHeaders", [])]
+        stored = 0
+        for values in report.get("rows", []):
+            row = dict(zip(headers, values))
+            day = str(row.get("day") or "")
+            captured_at = f"{day}T23:59:59+00:00" if day and "T" not in day else day
+            try:
+                age_hours = max(0.0, (datetime.now(UTC) - datetime.fromisoformat(captured_at)).total_seconds() / 3600)
+            except ValueError:
+                age_hours = 0.0
+            self.database.add_metric(
+                None,
+                {
+                    "captured_at": captured_at or utc_now(),
+                    "age_hours": age_hours,
+                    "views": int(row.get("views") or 0),
+                    "watch_time_minutes": float(row.get("estimatedminuteswatched") or 0),
+                    "average_view_percentage": float(row.get("averageviewpercentage")) if row.get("averageviewpercentage") is not None else None,
+                    "likes": int(row.get("likes") or 0),
+                    "comments": int(row.get("comments") or 0),
+                    "source": "youtube-analytics-api",
+                },
+            )
+            stored += 1
+        return {"metrics_stored": stored, "source": "youtube-analytics-api"}
+
     def run_auxiliary(self, job: dict) -> None:
         """Run a cheap control-plane job without entering the media graph.
 
@@ -83,7 +111,13 @@ class Worker:
         if job["type"] == "monitor" and payload.get("kind") == "youtube-sync":
             state["result"] = "dry-run: YouTube sync skipped" if self.settings.dry_run else self.youtube.sync_channel()
         elif job["type"] == "monitor" and payload.get("kind") == "analytics-deep":
-            state["result"] = "dry-run: Analytics sync skipped" if self.settings.dry_run else self.youtube.analytics_snapshot()
+            if self.settings.dry_run:
+                state["result"] = "dry-run: Analytics sync skipped"
+            else:
+                snapshot = self.youtube.analytics_snapshot()
+                state["result"] = self._store_analytics(snapshot)
+                state["result"]["raw_rows"] = len(snapshot.get("rows", []))
+
         elif job["type"] == "comments":
             state["result"] = {"comments_fetched": 0, "replies_posted": 0} if self.settings.dry_run else self.comments.run_cycle([video["id"] for video in self.database.list_videos(100)])
         elif job["type"] == "learning":

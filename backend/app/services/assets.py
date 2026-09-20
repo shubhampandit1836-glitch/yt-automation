@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
 import urllib.request
 from pathlib import Path
@@ -12,10 +13,34 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 class AssetService:
-    def __init__(self, directory: str, pexels_key: str | None = None, pixabay_key: str | None = None) -> None:
+    def __init__(self, directory: str, pexels_key: str | None = None, pixabay_key: str | None = None, gameplay_dir: str | None = None, gameplay_manifest: str | None = None) -> None:
         self.directory = Path(directory)
         self.pexels_key = pexels_key
         self.pixabay_key = pixabay_key
+        self.gameplay_dir = Path(gameplay_dir) if gameplay_dir else self.directory / "gameplay"
+        self.gameplay_manifest = Path(gameplay_manifest) if gameplay_manifest else self.gameplay_dir / "license-manifest.json"
+
+    def licensed_gameplay(self, *, limit: int = 1) -> list[dict[str, Any]]:
+        """Return only owner-declared gameplay assets with an explicit license."""
+        if not self.gameplay_manifest.exists():
+            return []
+        try:
+            manifest = json.loads(self.gameplay_manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        entries = manifest.get("assets", []) if isinstance(manifest, dict) else []
+        allowed: list[dict[str, Any]] = []
+        root = self.gameplay_dir.resolve()
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("allowed") is not True or not entry.get("license") or not entry.get("source"):
+                continue
+            candidate = (root / str(entry.get("path", ""))).resolve()
+            if not candidate.is_relative_to(root) or not candidate.is_file() or candidate.suffix.lower() not in {".mp4", ".mov", ".mkv", ".webm"}:
+                continue
+            allowed.append({"type": "licensed_gameplay", "local_path": str(candidate), "license": str(entry["license"]), "source": str(entry["source"]), "attribution": str(entry.get("attribution", "")), "allowed": True})
+            if len(allowed) >= limit:
+                break
+        return allowed
 
     def search(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []

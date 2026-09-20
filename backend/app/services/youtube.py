@@ -184,9 +184,15 @@ class YouTubeService:
             else:
                 local_video_id = self.database.create_video(payload)["id"]
             stats = item.get("statistics", {})
+            published_at = snippet.get("publishedAt")
+            try:
+                age_hours = max(0.0, (datetime.now(UTC) - datetime.fromisoformat(str(published_at).replace("Z", "+00:00"))).total_seconds() / 3600) if published_at else 0.0
+            except ValueError:
+                age_hours = 0.0
             self.database.add_metric(
                 local_video_id,
                 {
+                    "age_hours": age_hours,
                     "views": int(stats.get("viewCount", 0)),
                     "likes": int(stats.get("likeCount", 0)),
                     "comments": int(stats.get("commentCount", 0)),

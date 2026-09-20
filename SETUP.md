@@ -33,7 +33,7 @@ ENABLE_SCHEDULER=true python -m backend.app.scheduler
 
 ## What must be added before real automation
 
-The repository now includes the real YouTube OAuth/channel-sync adapter, Gemini structured research adapter, Edge TTS fallback, and FFmpeg rendering path. It still defaults to a safe preview. You must complete OAuth, install FFmpeg, configure a research key, and test a private upload before enabling scheduled publishing. Adding a key alone is not enough: the provider must pass the QA gates.
+The repository now includes the real YouTube OAuth/channel-sync adapter, Gemini structured research adapter, Edge TTS fallback, automatic professional FFmpeg editing, strict Short/long-form composition, and scheduled daily/weekly production jobs. It still defaults to a safe preview. You must complete OAuth, install FFmpeg and FFprobe, configure a research key, configure an external heartbeat, and test a private upload before enabling scheduled publishing. Adding a key alone is not enough: `/api/v1/automation/readiness` and the pipeline QA gates must pass.
 
 Do not share secrets in chat. Add them only to `/home/user/yt-automation/.env` on the machine running the app. `.env` is ignored by Git.
 
@@ -46,12 +46,33 @@ Do not share secrets in chat. Add them only to `/home/user/yt-automation/.env` o
 | Whisper alignment | [Groq Console](https://console.groq.com/keys) | `GROQ_API_KEY` | Active when configured; deterministic timing fallback otherwise |
 | Stock assets | [Pexels API](https://www.pexels.com/api/) or [Pixabay API](https://pixabay.com/api/docs/) | `PEXELS_API_KEY`, `PIXABAY_API_KEY` | Active optional licensed search |
 | Thumbnails | Pillow local renderer | `ASSET_DIR` | Active: three variants per video |
-| FFmpeg | System package / Docker image | `ffmpeg` executable | Active renderer |
+| FFmpeg | System package / Docker image | `ffmpeg` and `ffprobe` executables | Active professional editor: captions, fades, original music bed, voice mix, Shorts and long-form |
+| Licensed gameplay clips | Owner-provided files plus a license manifest | `GAMEPLAY_DIR`, `GAMEPLAY_MANIFEST` | Optional and default-deny; original motion graphics are used when absent |
 | Telegram alerts | [@BotFather](https://t.me/BotFather) for the bot token; chat ID from the Bot API `getUpdates` response | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Active on publish/failure when configured |
 | External dead-man heartbeat | [Healthchecks.io](https://healthchecks.io/) | `HEALTHCHECKS_HEARTBEAT_URL` | Active on worker watchdog cycles |
 | Long-term memory | Gemini embeddings with local cosine fallback | `GEMINI_API_KEY`, `GEMINI_EMBEDDING_MODEL` | Active in Memory page |
 | Learning/playbook | Local evidence tables and guardrails | none | Active daily worker cycle |
 | Cloud database | [Neon](https://neon.tech/) or [Supabase](https://supabase.com/) | Future `DATABASE_URL` / migration config | SQLite is active now |
+
+## Optional licensed gameplay footage
+
+Original animated gaming cards are the safe default and require no asset account. To let the editor automatically cut owner-provided gameplay, place clips under `GAMEPLAY_DIR` and create `GAMEPLAY_MANIFEST` with an explicit allow-list:
+
+```json
+{
+  "assets": [
+    {
+      "path": "my-gameplay.mp4",
+      "allowed": true,
+      "license": "My own recording",
+      "source": "owner-recorded",
+      "attribution": ""
+    }
+  ]
+}
+```
+
+The worker ignores clips without `allowed: true`, a license, a source, a safe file path, and a supported video extension. It never downloads publisher/game footage automatically.
 
 ## Google / YouTube one-time setup
 
