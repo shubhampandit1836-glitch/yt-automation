@@ -71,4 +71,6 @@ The dashboard's **Autopilot → Connect YouTube** button starts this flow once t
 6. Run the staging channel for at least seven days.
 7. Only then change `DRY_RUN=false` on the production worker, after reviewing the current YouTube policies and API quotas.
 
+On the first successful YouTube authorization, the app removes its seeded preview video, demo run history, demo series and demo experiment before the first real sync. It never deletes a real YouTube video. Click **Sync now** after authorization to import your channel and recent uploads.
+
 The dashboard and API do not need to be open for the scheduler or worker to continue running. They are monitoring and emergency-control surfaces only.

@@ -13,7 +13,9 @@ A safe-by-default control plane for the autonomous Hinglish gaming channel descr
 - durable jobs, runs, node events, videos, metrics, series, experiments, provider health and audit tables;
 - worker-side queue claiming with retries and backoff;
 - an APScheduler entry point that only enqueues work;
-- a resource governor with provider roles, reservations and persisted mock quota;
+- a resource governor with provider roles, reservations and persisted quota;
+- YouTube OAuth authorization, channel identity, recent-upload sync, Analytics snapshots and resumable scheduled upload;
+- Gemini grounded RSS research, Roman-Hinglish script generation, Edge TTS and deterministic FFmpeg Shorts rendering;
 - a safe pipeline graph that blocks unverified local fixture claims at QA;
 - SSE event stream for live dashboard updates;
 - owner control endpoints for pause, resume, kill switch and force-run;

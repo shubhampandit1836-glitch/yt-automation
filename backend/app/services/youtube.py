@@ -118,6 +118,9 @@ class YouTubeService:
         self._save_token(flow.credentials)
         self.database.set_setting("youtube_oauth_state", "")
         channel = self.get_channel()
+        if self.database.setting("youtube_connected_once", "false") != "true":
+            self.database.clear_preview_records()
+            self.database.set_setting("youtube_connected_once", "true")
         return channel
 
     def _api(self) -> Any:

@@ -603,6 +603,26 @@ class Database:
             ).fetchall()
         return [self._hydrate_video(self._row(row)) for row in rows]  # type: ignore[arg-type]
 
+    def clear_preview_records(self) -> dict[str, int]:
+        """Remove only local demo/preview records after a real channel connects."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT id FROM videos WHERE dry_run = 1 AND youtube_video_id IS NULL"
+            ).fetchall()
+            video_ids = [row["id"] for row in rows]
+            if video_ids:
+                placeholders = ",".join("?" for _ in video_ids)
+                connection.execute(f"DELETE FROM metrics WHERE video_id IN ({placeholders})", video_ids)
+                connection.execute(f"DELETE FROM videos WHERE id IN ({placeholders})", video_ids)
+            connection.execute(
+                "DELETE FROM series WHERE name = 'Myth Busted' AND json_extract(bible_json, '$.episode_count') = 0"
+            )
+            connection.execute("DELETE FROM experiments WHERE name = 'First hook rotation' AND json_extract(arms_json, '$[0].samples') = 0")
+            connection.execute("DELETE FROM run_events")
+            connection.execute("DELETE FROM runs")
+            connection.execute("DELETE FROM jobs")
+        return {"videos_removed": len(video_ids), "demo_seed_removed": 1}
+
     def add_metric(self, video_id: str | None, values: dict[str, Any]) -> dict[str, Any]:
         data = {
             "video_id": video_id,
