@@ -23,6 +23,8 @@ Provider, YouTube, FFmpeg, OAuth, pgvector and real embedding adapters are inten
 
 ## Quick start
 
+See [SETUP.md](SETUP.md) for the exact local run commands, provider links, secret locations and the safe activation order.
+
 ### Backend
 
 ```bash
