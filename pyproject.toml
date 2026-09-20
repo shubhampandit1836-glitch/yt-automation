@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yt-automation"
+version = "0.1.0"
+description = "Autonomous, observable Hinglish gaming channel orchestration scaffold"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "pydantic>=2.7,<3",
+  "pydantic-settings>=2.3,<3",
+  "apscheduler>=3.10,<4",
+  "httpx>=0.27,<1",
+  "langgraph>=0.2,<1",
+  "langchain-core>=0.3,<1",
+]
+
+[project.optional-dependencies]
+providers = [
+  "google-api-python-client>=2.140,<3",
+  "google-auth-oauthlib>=1.2,<2",
+  "google-generativeai>=0.8,<1",
+]
+test = ["pytest>=8,<9", "pytest-asyncio>=0.23,<1"]
+
+[project.scripts]
+yt-api = "backend.app.main:run"
+yt-worker = "backend.app.workers.runtime:main"
+yt-scheduler = "backend.app.scheduler:main"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["."]
