@@ -53,6 +53,22 @@ def build_router(database: Database, events: EventBus, governor: ResourceGoverno
     @router.get("/overview")
     def overview() -> dict[str, Any]:
         data = database.overview()
+        youtube = next((item for item in data["providers"] if item["provider"] == "youtube"), None)
+        ready = bool(not settings.dry_run and youtube and youtube["status"] == "healthy")
+        data["automation"] = {
+            "mode": "autopilot" if ready else ("setup" if not settings.dry_run else "preview"),
+            "ready": ready,
+            "message": (
+                "The worker and scheduler can run without the dashboard."
+                if ready
+                else "Preview only: connect verified research, rendering and YouTube upload adapters before publishing."
+            ),
+            "setup_needed": [
+                "verified research provider",
+                "render and TTS provider",
+                "YouTube OAuth and quota audit",
+            ] if not ready else [],
+        }
         data["governor"] = governor.snapshot()
         return data
 
